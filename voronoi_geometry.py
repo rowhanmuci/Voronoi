@@ -92,16 +92,16 @@ def perpendicular_bisector(p1: Point, p2: Point) -> Tuple[float, float, float]:
     mx = (p1.x + p2.x) / 2
     my = (p1.y + p2.y) / 2
     
-    # 方向向量
+    # p1 到 p2 的方向向量
     dx = p2.x - p1.x
     dy = p2.y - p1.y
     
-    # 中垂線方向向量為 (-dy, dx)
-    # 中垂線方程: -dy * (x - mx) + dx * (y - my) = 0
-    # 整理為: -dy * x + dx * y + (dy * mx - dx * my) = 0
-    a = -dy
-    b = dx
-    c = dy * mx - dx * my
+    # 中垂線的法向量就是 (dx, dy)（垂直於線段的向量）
+    # 中垂線方程: dx*(x - mx) + dy*(y - my) = 0
+    # 展開: dx*x + dy*y - dx*mx - dy*my = 0
+    a = dx
+    b = dy
+    c = -dx * mx - dy * my
     
     return (a, b, c)
 
@@ -112,13 +112,21 @@ def line_intersection(a1: float, b1: float, c1: float,
     計算兩條直線的交點
     L1: a1*x + b1*y + c1 = 0
     L2: a2*x + b2*y + c2 = 0
+    
+    使用 Cramer's rule 求解:
+    [a1  b1] [x]   [-c1]
+    [a2  b2] [y] = [-c2]
+    
+    det = a1*b2 - a2*b1
+    x = (-c1*b2 + c2*b1) / det
+    y = (-a1*c2 + a2*c1) / det
     """
     det = a1 * b2 - a2 * b1
     if abs(det) < 1e-9:  # 平行
         return None
     
-    x = (b1 * c2 - b2 * c1) / det
-    y = (a2 * c1 - a1 * c2) / det
+    x = (-c1 * b2 + c2 * b1) / det
+    y = (-a1 * c2 + a2 * c1) / det
     return Point(x, y)
 
 

@@ -334,23 +334,60 @@ class VoronoiGUI:
             self.clear_all()
             
             # 解析檔案
-            for line in lines:
-                line = line.strip()
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                i += 1
                 
                 # 跳過註解和空行
-                if not line or line.startswith('#') or line.startswith('0'):
+                if not line or line.startswith('#'):
                     continue
                 
-                parts = line.split()
-                if len(parts) >= 2:
-                    try:
-                        x = float(parts[0])
-                        y = float(parts[1])
-                        point = Point(x, y)
-                        self.points.append(point)
-                        self.draw_point(point)
-                    except ValueError:
+                # 讀取點數 n
+                try:
+                    n = int(line)
+                except ValueError:
+                    continue
+                
+                # 如果 n = 0，結束讀取
+                if n == 0:
+                    messagebox.showinfo("Info", "讀入點數為零，檔案測試停止")
+                    break
+                
+                # 讀取 n 個點
+                points_in_group = []
+                for j in range(n):
+                    if i >= len(lines):
+                        break
+                    
+                    point_line = lines[i].strip()
+                    i += 1
+                    
+                    # 跳過註解
+                    if point_line.startswith('#'):
+                        j -= 1
                         continue
+                    
+                    parts = point_line.split()
+                    if len(parts) >= 2:
+                        try:
+                            x = float(parts[0])
+                            y = float(parts[1])
+                            point = Point(x, y)
+                            points_in_group.append(point)
+                        except ValueError:
+                            continue
+                
+                # 添加這一組點
+                self.points.extend(points_in_group)
+                
+                # 只讀取第一組資料（如果要支援多組測試，可以改成迴圈）
+                # 這裡先實作單組測試
+                break
+            
+            # 繪製所有點
+            for point in self.points:
+                self.draw_point(point)
             
             self.update_points_list()
             self.status_bar.config(text=f"Loaded {len(self.points)} points from {filename}")

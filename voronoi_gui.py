@@ -114,6 +114,17 @@ class VoronoiGUI:
         )
         self.reset_btn.pack(pady=5)
         
+        # Next Test 按鈕
+        self.next_test_btn = tk.Button(
+            control_frame,
+            text="Next Test",
+            command=self.next_test_group,
+            bg='lightcyan',
+            font=('Arial', 12),
+            width=20
+        )
+        self.next_test_btn.pack(pady=5)
+        
         # 分隔線
         tk.Frame(control_frame, height=2, bg='gray').pack(fill=tk.X, pady=20)
         
@@ -317,7 +328,7 @@ class VoronoiGUI:
         self.status_bar.config(text="Algorithm reset.")
     
     def load_input_file(self):
-        """載入輸入檔案"""
+        """載入輸入檔案（支援多組測試資料）"""
         filename = filedialog.askopenfilename(
             title="Select Input File",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
@@ -327,14 +338,26 @@ class VoronoiGUI:
             return
         
         try:
-            with open(filename, 'r') as f:
-                lines = f.readlines()
+            # 嘗試多種編碼
+            lines = None
+            encodings = ['utf-8', 'cp950', 'big5', 'gbk', 'latin-1']
             
-            # 清空現有資料
-            self.clear_all()
+            for encoding in encodings:
+                try:
+                    with open(filename, 'r', encoding=encoding) as f:
+                        lines = f.readlines()
+                    break  # 成功讀取，跳出迴圈
+                except (UnicodeDecodeError, LookupError):
+                    continue
             
-            # 解析檔案
+            if lines is None:
+                messagebox.showerror("Error", "無法讀取檔案，請檢查檔案編碼")
+                return
+            
+            # 解析檔案，讀取所有組測試資料
+            test_groups = []
             i = 0
+            
             while i < len(lines):
                 line = lines[i].strip()
                 i += 1
@@ -351,21 +374,18 @@ class VoronoiGUI:
                 
                 # 如果 n = 0，結束讀取
                 if n == 0:
-                    messagebox.showinfo("Info", "讀入點數為零，檔案測試停止")
                     break
                 
-                # 讀取 n 個點
+                # 讀取 n 個點（使用 while 迴圈）
                 points_in_group = []
-                for j in range(n):
-                    if i >= len(lines):
-                        break
-                    
+                points_read = 0
+                
+                while points_read < n and i < len(lines):
                     point_line = lines[i].strip()
                     i += 1
                     
-                    # 跳過註解
-                    if point_line.startswith('#'):
-                        j -= 1
+                    # 跳過註解和空行
+                    if not point_line or point_line.startswith('#'):
                         continue
                     
                     parts = point_line.split()
@@ -375,25 +395,77 @@ class VoronoiGUI:
                             y = float(parts[1])
                             point = Point(x, y)
                             points_in_group.append(point)
+                            points_read += 1
                         except ValueError:
                             continue
                 
-                # 添加這一組點
-                self.points.extend(points_in_group)
-                
-                # 只讀取第一組資料（如果要支援多組測試，可以改成迴圈）
-                # 這裡先實作單組測試
-                break
+                # 儲存這一組測試資料
+                if points_in_group:
+                    test_groups.append(points_in_group)
             
-            # 繪製所有點
-            for point in self.points:
-                self.draw_point(point)
-            
-            self.update_points_list()
-            self.status_bar.config(text=f"Loaded {len(self.points)} points from {filename}")
+            # 儲存測試資料組並開始顯示第一組
+            if test_groups:
+                self.test_groups = test_groups
+                self.current_test_index = 0
+                self.show_current_test_group()
+            else:
+                messagebox.showwarning("Warning", "No valid test data found in file")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load file: {str(e)}")
+    
+    def show_current_test_group(self):
+        """顯示當前測試組"""
+        if not hasattr(self, 'test_groups') or not self.test_groups:
+            return
+        
+        if self.current_test_index >= len(self.test_groups):
+            messagebox.showinfo("Info", "已完成所有測試組")
+            return
+        
+        # 清空並載入當前測試組
+        self.clear_all()
+        current_group = self.test_groups[self.current_test_index]
+        self.points = current_group.copy()
+        
+        # 繪製所有點
+        for point in self.points:
+            self.draw_point(point)
+        
+        self.update_points_list()
+        
+        # 更新狀態列
+        total_groups = len(self.test_groups)
+        current_num = self.current_test_index + 1
+        self.status_bar.config(
+            text=f"Test {current_num}/{total_groups}: Loaded {len(self.points)} points. "
+                 f"Run algorithm, then press 'Next Test' for next group."
+        )
+        
+        # 顯示訊息框告知使用者
+        coords_str = "\n".join([f"  ({p.x}, {p.y})" for p in self.points])
+        messagebox.showinfo(
+            "Test Data Loaded",
+            f"測試組 {current_num}/{total_groups}\n"
+            f"點數: {len(self.points)}\n"
+            f"座標:\n{coords_str}\n\n"
+            f"請執行演算法後按 'Next Test' 繼續下一組"
+        )
+    
+    def next_test_group(self):
+        """載入下一組測試資料"""
+        if not hasattr(self, 'test_groups') or not self.test_groups:
+            messagebox.showwarning("Warning", "No test data loaded. Please load input file first.")
+            return
+        
+        self.current_test_index += 1
+        
+        if self.current_test_index >= len(self.test_groups):
+            messagebox.showinfo("Info", "所有測試組已完成！")
+            self.current_test_index = len(self.test_groups) - 1  # 停在最後一組
+            return
+        
+        self.show_current_test_group()
     
     def save_output_file(self):
         """儲存輸出檔案"""
@@ -411,7 +483,8 @@ class VoronoiGUI:
             return
         
         try:
-            with open(filename, 'w') as f:
+            # 使用 UTF-8 without BOM
+            with open(filename, 'w', encoding='utf-8') as f:
                 # 輸出座標點 (按 lexical order 排序)
                 sorted_points = sorted(self.points, key=lambda p: (p.x, p.y))
                 for p in sorted_points:
@@ -448,8 +521,21 @@ class VoronoiGUI:
             return
         
         try:
-            with open(filename, 'r') as f:
-                lines = f.readlines()
+            # 嘗試多種編碼，優先使用 utf-8-sig 處理 BOM
+            lines = None
+            encodings = ['utf-8-sig', 'utf-8', 'cp950', 'big5', 'gbk', 'latin-1']
+            
+            for encoding in encodings:
+                try:
+                    with open(filename, 'r', encoding=encoding) as f:
+                        lines = f.readlines()
+                    break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            
+            if lines is None:
+                messagebox.showerror("Error", "無法讀取檔案，請檢查檔案編碼")
+                return
             
             # 清空現有資料
             self.clear_all()
@@ -463,11 +549,21 @@ class VoronoiGUI:
                 if not line:
                     continue
                 
+                # 移除可能的 BOM
+                if line.startswith('\ufeff'):
+                    line = line[1:]
+                
                 parts = line.split()
-                if parts[0] == 'P' and len(parts) >= 3:
+                if len(parts) < 3:
+                    continue
+                
+                # 檢查第一個字元（可能有 BOM）
+                type_char = parts[0].lstrip('\ufeff')
+                
+                if type_char == 'P' and len(parts) >= 3:
                     x, y = float(parts[1]), float(parts[2])
                     points.append(Point(x, y))
-                elif parts[0] == 'E' and len(parts) >= 5:
+                elif type_char == 'E' and len(parts) >= 5:
                     x1, y1 = float(parts[1]), float(parts[2])
                     x2, y2 = float(parts[3]), float(parts[4])
                     edge = Edge(Point(x1, y1), Point(x2, y2))

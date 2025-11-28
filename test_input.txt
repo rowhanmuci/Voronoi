@@ -1,0 +1,9 @@
+# Test Input File for Voronoi Diagram
+# Format: x y (coordinates)
+# Lines starting with # are comments
+
+4
+103 200
+193 64
+193 370
+283 200

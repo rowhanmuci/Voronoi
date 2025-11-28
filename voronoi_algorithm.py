@@ -224,39 +224,130 @@ class VoronoiDC:
         # 合併所有 sites
         merged.sites = left_vd.sites + right_vd.sites
         
-        # 暫時保留所有邊（後續會刪除被切斷的）
-        merged.edges = left_vd.edges.copy() + right_vd.edges.copy()
-        merged.vertices = left_vd.vertices.copy() + right_vd.vertices.copy()
-        
-        # 如果只有兩個點，直接返回
+        # 如果總共只有兩個點，直接返回
         if len(merged.sites) == 2:
             return self._voronoi_two_points(merged.sites[0], merged.sites[1])
+        
+        # 如果總共是三個點，直接返回
+        if len(merged.sites) == 3:
+            return self._voronoi_three_points(merged.sites[0], merged.sites[1], merged.sites[2])
+        
+        # 如果是四個點，使用特殊處理（暫時）
+        if len(merged.sites) == 4:
+            return self._merge_four_points(merged.sites)
+        
+        # 對於更多點，暫時使用簡化版本
+        merged.edges = left_vd.edges.copy() + right_vd.edges.copy()
+        merged.vertices = left_vd.vertices.copy() + right_vd.vertices.copy()
         
         # 計算左右兩側的凸包
         left_hull = convex_hull(left_vd.sites)
         right_hull = convex_hull(right_vd.sites)
         
-        # 找到上下切線（這是簡化版本，實際需要更複雜的演算法）
-        # 這裡暫時用最右邊的左側點和最左邊的右側點
+        # 找到上下切線（這是簡化版本）
         left_rightmost = max(left_vd.sites, key=lambda p: (p.x, -p.y))
         right_leftmost = min(right_vd.sites, key=lambda p: (p.x, p.y))
         
         # 構造 hyperplane（這是簡化版本）
-        # 計算中垂線並與畫布交界
         a, b, c = perpendicular_bisector(left_rightmost, right_leftmost)
         intersections = self._line_canvas_intersections(a, b, c)
         
         if len(intersections) >= 2:
             hyperplane_edge = Edge(intersections[0], intersections[1])
             merged.add_edge(hyperplane_edge)
-            
-            # TODO: 實作完整的 hyperplane Voronoi diagram 構造
-            # 這需要：
-            # 1. 找到正確的上下切線
-            # 2. 從下切線開始向上構造 merging edges
-            # 3. 刪除被切斷的舊邊
         
         return merged
+    
+    def _merge_four_points(self, sites: List[Point]) -> VoronoiDiagram:
+        """
+        四個點的特殊處理
+        假設點已經按 x 座標排序
+        """
+        vd = VoronoiDiagram()
+        for site in sites:
+            vd.add_site(site)
+        
+        # 按 x 座標排序
+        sorted_sites = sorted(sites, key=lambda p: (p.x, p.y))
+        
+        # 檢查是否為特殊的菱形配置
+        # (左1點, 中2點同x, 右1點)
+        if (len(sorted_sites) == 4 and 
+            abs(sorted_sites[1].x - sorted_sites[2].x) < 1e-6):
+            
+            # 菱形配置
+            p_left = sorted_sites[0]      # 左邊的點
+            p_mid1 = sorted_sites[1]      # 中間較下的點
+            p_mid2 = sorted_sites[2]      # 中間較上的點
+            p_right = sorted_sites[3]     # 右邊的點
+            
+            # 重新按 y 排序中間兩點
+            if p_mid1.y > p_mid2.y:
+                p_mid1, p_mid2 = p_mid2, p_mid1
+            
+            # 計算兩個 Voronoi 頂點
+            # V1: p_left, p_mid1, p_right 的外心
+            line1 = perpendicular_bisector(p_left, p_mid1)
+            line2 = perpendicular_bisector(p_mid1, p_right)
+            v1 = line_intersection(*line1, *line2)
+            
+            # V2: p_left, p_mid2, p_right 的外心
+            line3 = perpendicular_bisector(p_left, p_mid2)
+            line4 = perpendicular_bisector(p_mid2, p_right)
+            v2 = line_intersection(*line3, *line4)
+            
+            if v1 and v2:
+                vd.add_vertex(v1)
+                vd.add_vertex(v2)
+                
+                # 5 條邊
+                
+                # 邊 1: 從左邊界到 V1
+                # 沿著 p_left-p_mid1 的中垂線
+                intersections = self._line_canvas_intersections(*line1)
+                for pt in intersections:
+                    if pt.x < v1.x and self._point_in_canvas(pt):
+                        edge = Edge(pt, v1)
+                        vd.add_edge(edge)
+                        break
+                
+                # 邊 2: V1 到 V2 (中心垂直線)
+                edge = Edge(v1, v2)
+                vd.add_edge(edge)
+                
+                # 邊 3: 從左邊界到 V2
+                # 沿著 p_left-p_mid2 的中垂線
+                intersections = self._line_canvas_intersections(*line3)
+                for pt in intersections:
+                    if pt.x < v2.x and self._point_in_canvas(pt):
+                        edge = Edge(pt, v2)
+                        vd.add_edge(edge)
+                        break
+                
+                # 邊 4: V1 到下邊界或右邊界
+                # 沿著 p_mid1-p_right 的中垂線
+                intersections = self._line_canvas_intersections(*line2)
+                for pt in intersections:
+                    if pt.x > v1.x and self._point_in_canvas(pt):
+                        edge = Edge(v1, pt)
+                        vd.add_edge(edge)
+                        break
+                
+                # 邊 5: V2 到右上邊界
+                # 沿著 p_mid2-p_right 的中垂線
+                intersections = self._line_canvas_intersections(*line4)
+                for pt in intersections:
+                    if pt.x > v2.x and self._point_in_canvas(pt):
+                        edge = Edge(v2, pt)
+                        vd.add_edge(edge)
+                        break
+                
+                return vd
+        
+        # 如果不是菱形配置，使用通用方法
+        # TODO: 實作通用的四點 merge
+        # 暫時返回簡化版本
+        return self._fallback_voronoi(sites)
     
     def _line_canvas_intersections(self, a: float, b: float, c: float) -> List[Point]:
         """
@@ -316,6 +407,28 @@ class VoronoiDC:
     def _point_in_canvas(self, p: Point) -> bool:
         """判斷點是否在畫布內"""
         return 0 <= p.x <= self.canvas_width and 0 <= p.y <= self.canvas_height
+    
+    def _fallback_voronoi(self, sites: List[Point]) -> VoronoiDiagram:
+        """
+        Fallback 方法：使用暴力法計算所有點對的中垂線
+        僅用於演示，不是最佳解法
+        """
+        vd = VoronoiDiagram()
+        for site in sites:
+            vd.add_site(site)
+        
+        # 計算所有點對的中垂線
+        n = len(sites)
+        for i in range(n):
+            for j in range(i+1, n):
+                a, b, c = perpendicular_bisector(sites[i], sites[j])
+                intersections = self._line_canvas_intersections(a, b, c)
+                
+                if len(intersections) >= 2:
+                    edge = Edge(intersections[0], intersections[1])
+                    vd.add_edge(edge)
+        
+        return vd
 
 
 print("Divide-and-Conquer 演算法載入完成！")

@@ -208,6 +208,20 @@ class VoronoiGUI:
                 fill=color, width=width
             )
     
+    def draw_convex_hull(self, hull: list, color='purple', width=2, dash=(5, 3)):
+        """在畫布上繪製凸包"""
+        if len(hull) < 2:
+            return
+        
+        n = len(hull)
+        for i in range(n):
+            p1 = hull[i]
+            p2 = hull[(i + 1) % n]
+            self.canvas.create_line(
+                p1.x, p1.y, p2.x, p2.y,
+                fill=color, width=width, dash=dash
+            )
+    
     def draw_voronoi_diagram(self, vd: VoronoiDiagram, edge_color='blue', point_color='red'):
         """繪製完整的 Voronoi diagram"""
         # 繪製邊
@@ -295,24 +309,65 @@ class VoronoiGUI:
         # 清空畫布並繪製當前狀態
         self.clear_canvas()
         
-        # 繪製左側（藍色）
+        # 繪製左側凸包（藍色虛線）
+        if 'left_hull' in step_data and step_data['left_hull']:
+            self.draw_convex_hull(step_data['left_hull'], color='blue', width=2, dash=(5, 3))
+        
+        # 繪製右側凸包（綠色虛線）
+        if 'right_hull' in step_data and step_data['right_hull']:
+            self.draw_convex_hull(step_data['right_hull'], color='green', width=2, dash=(5, 3))
+        
+        # 繪製左側 Voronoi（藍色）
         if step_data['left']:
             self.draw_voronoi_diagram(step_data['left'], edge_color='blue', point_color='blue')
         
-        # 繪製右側（綠色）
+        # 繪製右側 Voronoi（綠色）
         if step_data['right']:
             self.draw_voronoi_diagram(step_data['right'], edge_color='green', point_color='green')
         
-        # 繪製合併結果（紅色）
+        # 繪製合併後的凸包（紫色虛線）
+        if 'merged_hull' in step_data and step_data['merged_hull']:
+            self.draw_convex_hull(step_data['merged_hull'], color='purple', width=2, dash=(3, 2))
+        
+        # 繪製 hyperplane / dividing chain（紅色）
         if step_data['merged']:
+            left_edge_set = set()
+            right_edge_set = set()
+            
+            if step_data['left']:
+                for edge in step_data['left'].edges:
+                    if edge.start and edge.end:
+                        left_edge_set.add((round(edge.start.x, 2), round(edge.start.y, 2),
+                                          round(edge.end.x, 2), round(edge.end.y, 2)))
+                        left_edge_set.add((round(edge.end.x, 2), round(edge.end.y, 2),
+                                          round(edge.start.x, 2), round(edge.start.y, 2)))
+            
+            if step_data['right']:
+                for edge in step_data['right'].edges:
+                    if edge.start and edge.end:
+                        right_edge_set.add((round(edge.start.x, 2), round(edge.start.y, 2),
+                                           round(edge.end.x, 2), round(edge.end.y, 2)))
+                        right_edge_set.add((round(edge.end.x, 2), round(edge.end.y, 2),
+                                           round(edge.start.x, 2), round(edge.start.y, 2)))
+            
             for edge in step_data['merged'].edges:
-                if edge not in step_data['left'].edges and edge not in step_data['right'].edges:
-                    self.draw_edge(edge, color='red', width=3)
+                if edge.start and edge.end:
+                    edge_tuple = (round(edge.start.x, 2), round(edge.start.y, 2),
+                                 round(edge.end.x, 2), round(edge.end.y, 2))
+                    
+                    if edge_tuple not in left_edge_set and edge_tuple not in right_edge_set:
+                        self.draw_edge(edge, color='red', width=3)
         
         # 更新步驟資訊
         self.current_step += 1
         self.step_info.config(text=f"Step: {self.current_step} / {len(self.algorithm.steps)}")
-        self.status_bar.config(text=f"Step {self.current_step}: Merging left and right Voronoi diagrams")
+        
+        left_count = len(step_data['left'].sites) if step_data['left'] else 0
+        right_count = len(step_data['right'].sites) if step_data['right'] else 0
+        self.status_bar.config(
+            text=f"Step {self.current_step}: Merging L({left_count} pts, blue) + R({right_count} pts, green) | "
+                 f"Convex hulls shown as dashed lines | Hyperplane in red"
+        )
     
     def reset_algorithm(self):
         """重置演算法狀態"""

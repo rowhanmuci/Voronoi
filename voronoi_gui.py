@@ -287,87 +287,77 @@ class VoronoiGUI:
             self.status_bar.config(text=f"Algorithm completed. {len(self.current_vd.edges)} edges generated.")
     
     def step_algorithm(self):
-        """單步執行演算法"""
-        if len(self.points) < 2:
-            messagebox.showwarning("Warning", "Need at least 2 points!")
-            return
-        
-        # 第一次按下 Step by Step
-        if not self.step_mode:
-            self.step_mode = True
-            self.current_step = 0
-            self.current_vd = self.algorithm.build(self.points)
-        
-        # 檢查是否還有步驟
-        if self.current_step >= len(self.algorithm.steps):
-            messagebox.showinfo("Info", "Algorithm completed!")
-            return
-        
-        # 獲取當前步驟
-        step_data = self.algorithm.steps[self.current_step]
-        
-        # 清空畫布並繪製當前狀態
-        self.clear_canvas()
-        
-        # 繪製左側凸包（藍色虛線）
-        if 'left_hull' in step_data and step_data['left_hull']:
-            self.draw_convex_hull(step_data['left_hull'], color='blue', width=2, dash=(5, 3))
-        
-        # 繪製右側凸包（綠色虛線）
-        if 'right_hull' in step_data and step_data['right_hull']:
-            self.draw_convex_hull(step_data['right_hull'], color='green', width=2, dash=(5, 3))
-        
-        # 繪製左側 Voronoi（藍色）
-        if step_data['left']:
-            self.draw_voronoi_diagram(step_data['left'], edge_color='blue', point_color='blue')
-        
-        # 繪製右側 Voronoi（綠色）
-        if step_data['right']:
-            self.draw_voronoi_diagram(step_data['right'], edge_color='green', point_color='green')
-        
-        # 繪製合併後的凸包（紫色虛線）
-        if 'merged_hull' in step_data and step_data['merged_hull']:
-            self.draw_convex_hull(step_data['merged_hull'], color='purple', width=2, dash=(3, 2))
-        
-        # 繪製 hyperplane / dividing chain（紅色）
-        if step_data['merged']:
-            left_edge_set = set()
-            right_edge_set = set()
+            """單步執行演算法"""
+            if len(self.points) < 2:
+                messagebox.showwarning("Warning", "Need at least 2 points!")
+                return
             
-            if step_data['left']:
-                for edge in step_data['left'].edges:
-                    if edge.start and edge.end:
-                        left_edge_set.add((round(edge.start.x, 2), round(edge.start.y, 2),
-                                          round(edge.end.x, 2), round(edge.end.y, 2)))
-                        left_edge_set.add((round(edge.end.x, 2), round(edge.end.y, 2),
-                                          round(edge.start.x, 2), round(edge.start.y, 2)))
+            if not self.step_mode:
+                self.step_mode = True
+                self.current_step = 0
+                self.current_vd = self.algorithm.build(self.points)
             
-            if step_data['right']:
-                for edge in step_data['right'].edges:
-                    if edge.start and edge.end:
-                        right_edge_set.add((round(edge.start.x, 2), round(edge.start.y, 2),
-                                           round(edge.end.x, 2), round(edge.end.y, 2)))
-                        right_edge_set.add((round(edge.end.x, 2), round(edge.end.y, 2),
-                                           round(edge.start.x, 2), round(edge.start.y, 2)))
+            if self.current_step >= len(self.algorithm.steps):
+                messagebox.showinfo("Info", "Algorithm completed!")
+                return
             
-            for edge in step_data['merged'].edges:
-                if edge.start and edge.end:
-                    edge_tuple = (round(edge.start.x, 2), round(edge.start.y, 2),
-                                 round(edge.end.x, 2), round(edge.end.y, 2))
+            step_data = self.algorithm.steps[self.current_step]
+            self.clear_canvas()
+            
+            # 1. 繪製 Convex Hulls (虛線)
+            if 'left_hull' in step_data:
+                self.draw_convex_hull(step_data['left_hull'], color='gray', width=1, dash=(4, 4))
+            if 'right_hull' in step_data:
+                self.draw_convex_hull(step_data['right_hull'], color='gray', width=1, dash=(4, 4))
+            
+            # 2. 繪製 Voronoi 邊 (根據歸屬上色)
+            # 我們遍歷 merged 中的所有邊
+            # 如果邊在 hyperplane 列表中 -> 紅色
+            # 否則判斷它是屬於左邊還是右邊 (利用 site 判斷)
+            
+            hyperplane_edges = step_data.get('hyperplane', [])
+            # 建立 hyperplane 集合以便快速查詢 (用座標 tuple)
+            hp_set = set()
+            for e in hyperplane_edges:
+                if e.start and e.end:
+                    hp_set.add((round(e.start.x, 2), round(e.start.y, 2), round(e.end.x, 2), round(e.end.y, 2)))
+                    hp_set.add((round(e.end.x, 2), round(e.end.y, 2), round(e.start.x, 2), round(e.start.y, 2)))
+
+            left_sites = set(step_data['left_sites'])
+            
+            if step_data['merged']:
+                for edge in step_data['merged'].edges:
+                    if not edge.start or not edge.end: continue
                     
-                    if edge_tuple not in left_edge_set and edge_tuple not in right_edge_set:
+                    # 檢查是否為 Hyperplane
+                    edge_tup = (round(edge.start.x, 2), round(edge.start.y, 2), round(edge.end.x, 2), round(edge.end.y, 2))
+                    
+                    if edge_tup in hp_set:
                         self.draw_edge(edge, color='red', width=3)
-        
-        # 更新步驟資訊
-        self.current_step += 1
-        self.step_info.config(text=f"Step: {self.current_step} / {len(self.algorithm.steps)}")
-        
-        left_count = len(step_data['left'].sites) if step_data['left'] else 0
-        right_count = len(step_data['right'].sites) if step_data['right'] else 0
-        self.status_bar.config(
-            text=f"Step {self.current_step}: Merging L({left_count} pts, blue) + R({right_count} pts, green) | "
-                 f"Convex hulls shown as dashed lines | Hyperplane in red"
-        )
+                    else:
+                        # 判斷顏色：檢查 edge 的 site 是否在左邊
+                        # 注意：演算法中 edge.site_left/right 可能有一邊是 None (如果是邊界)，或者都有
+                        is_left = False
+                        if edge.site_left and edge.site_left in left_sites:
+                            is_left = True
+                        elif edge.site_right and edge.site_right in left_sites:
+                            is_left = True
+                        
+                        if is_left:
+                            self.draw_edge(edge, color='blue', width=2)
+                        else:
+                            self.draw_edge(edge, color='green', width=2)
+
+            # 繪製頂點和站點
+            if step_data['merged']:
+                for site in step_data['merged'].sites:
+                    color = 'blue' if site in left_sites else 'green'
+                    self.draw_point(site, color=color, size=4)
+                    
+            # 更新資訊
+            self.current_step += 1
+            self.step_info.config(text=f"Step: {self.current_step} / {len(self.algorithm.steps)}")
+            self.status_bar.config(text=f"Step {self.current_step}: Merging... Red=Hyperplane, Gray=Hull")
     
     def reset_algorithm(self):
         """重置演算法狀態"""

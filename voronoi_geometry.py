@@ -146,9 +146,15 @@ def convex_hull(points: List[Point]) -> List[Point]:
     計算凸包 (使用 Graham Scan)
     返回按逆時針順序排列的凸包頂點
     """
+    # [修正 1] 移除 len <= 2 的特殊判斷，統一走下面的排序邏輯
+    # 這樣可以保證即使只有 2 點，也是依照「角度/逆時針」順序排列，而非單純的 X 軸順序
+    if not points:
+        return []
     if len(points) <= 2:
-        return points.copy()
-    
+        # 對於 2 點，直接按座標排序可能不符合 CCW 邏輯（取決於相對位置）
+        # 最安全的方法是讓它們像多點一樣，找最低點然後按角度排
+        pass 
+
     # 找到最下面最左邊的點
     start = min(points, key=lambda p: (p.y, p.x))
     
@@ -156,6 +162,7 @@ def convex_hull(points: List[Point]) -> List[Point]:
     def polar_angle_key(p: Point):
         dx = p.x - start.x
         dy = p.y - start.y
+        # 使用 atan2 確保角度正確
         return (math.atan2(dy, dx), dx*dx + dy*dy)
     
     sorted_points = [start] + sorted([p for p in points if p != start], key=polar_angle_key)
@@ -163,7 +170,10 @@ def convex_hull(points: List[Point]) -> List[Point]:
     # Graham Scan
     hull = []
     for p in sorted_points:
-        while len(hull) > 1 and ccw(hull[-2], hull[-1], p) <= 0:
+        # [修正 2] 將 <= 0 改為 < 0
+        # <= 0 會移除共線的點 (只留兩端)
+        # < 0 則會保留共線的點 (這對 Voronoi 的切線搜尋較為穩健)
+        while len(hull) > 1 and ccw(hull[-2], hull[-1], p) < 0:
             hull.pop()
         hull.append(p)
     

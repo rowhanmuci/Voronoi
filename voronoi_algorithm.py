@@ -1,6 +1,10 @@
 """
 Voronoi Diagram - Divide and Conquer 演算法
 完整實作包含 merge 演算法
+
+【修正記錄】
+v2: 修正水平 hyperplane 時無法找到交點的問題
+    當中垂線是水平線 (a ≈ 0) 時，需要用 x 座標判斷前進方向
 """
 from typing import List, Tuple, Optional
 from voronoi_geometry import Point, Edge, VoronoiDiagram, perpendicular_bisector, line_intersection, convex_hull, ccw, circumcenter, merge_convex_hulls
@@ -365,6 +369,7 @@ class VoronoiDC:
             iteration += 1
             a, b, c = perpendicular_bisector(cur_left, cur_right)
             
+            # 【修正】使用新的 _find_next_hits 函數
             next_point, hits = self._find_next_hits(
                 cur_point, a, b, c,
                 cur_left, cur_right,
@@ -373,13 +378,7 @@ class VoronoiDC:
             )
             
             if next_point is None:
-                boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
-                if boundary_pt is None:
-                    intersections = self._line_canvas_intersections(a, b, c)
-                    if intersections:
-                        candidates = [p for p in intersections if p.y > cur_point.y + 1e-5]
-                        if candidates:
-                            boundary_pt = min(candidates, key=lambda p: p.y)
+                boundary_pt = self._find_chain_end_boundary(a, b, c, cur_point, cur_left, cur_right)
                 
                 if boundary_pt and cur_point:
                     edge = Edge(cur_point, boundary_pt)
@@ -405,13 +404,7 @@ class VoronoiDC:
             
             if cur_left == lower_left and cur_right == lower_right:
                 a, b, c = perpendicular_bisector(cur_left, cur_right)
-                boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
-                if boundary_pt is None:
-                    intersections = self._line_canvas_intersections(a, b, c)
-                    if intersections:
-                        candidates = [p for p in intersections if p.y > next_point.y + 1e-5]
-                        if candidates:
-                            boundary_pt = min(candidates, key=lambda p: p.y)
+                boundary_pt = self._find_chain_end_boundary(a, b, c, next_point, cur_left, cur_right)
                 
                 if boundary_pt and next_point:
                     edge = Edge(next_point, boundary_pt)
@@ -425,6 +418,35 @@ class VoronoiDC:
         right_edges = [e for e in right_edges if e.start and e.end and e.start.distance_to(e.end) > 1e-6]
         
         return chain_edges, left_edges, right_edges
+    
+    def _find_chain_end_boundary(self, a: float, b: float, c: float, 
+                                  cur_point: Point, cur_left: Point, cur_right: Point) -> Optional[Point]:
+        """找 chain 結束時的邊界點，處理水平和非水平線"""
+        is_horizontal = abs(a) < 1e-9
+        
+        if is_horizontal:
+            # 水平線：往 x 方向找邊界
+            if abs(cur_left.x - cur_right.x) > 1e-5:
+                go_left = cur_left.x < cur_right.x
+            else:
+                # x 座標相同：根據 cur_point 的位置判斷
+                mid_x = (cur_left.x + cur_right.x) / 2
+                go_left = cur_point.x > mid_x
+            
+            if go_left:
+                return Point(0, cur_point.y)
+            else:
+                return Point(self.canvas_width, cur_point.y)
+        else:
+            # 非水平線：往下找邊界
+            boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
+            if boundary_pt is None:
+                intersections = self._line_canvas_intersections(a, b, c)
+                if intersections:
+                    candidates = [p for p in intersections if p.y > cur_point.y + 1e-5]
+                    if candidates:
+                        boundary_pt = min(candidates, key=lambda p: p.y)
+            return boundary_pt
     
     def _find_boundary_intersection(self, a: float, b: float, c: float, side: str) -> Optional[Point]:
         """找直線與特定邊界的交點"""
@@ -457,32 +479,70 @@ class VoronoiDC:
                         cur_left: Point, cur_right: Point,
                         left_edges: List[Edge], right_edges: List[Edge],
                         left_sites: List[Point], right_sites: List[Point]):
-        """沿中垂線往下找最近的交點，支援多重撞擊"""
+        """
+        沿中垂線往前進方向找最近的交點，支援多重撞擊
+        
+        【修正 v2】處理水平線的情況：
+        - 當 a ≈ 0 時，直線是水平的 (y = -c/b)
+        - 此時需要用 x 座標判斷前進方向
+        
+        【修正 v3】處理 cur_left.x == cur_right.x 的情況：
+        - 當兩點 x 座標相同時，根據 cur_point 的位置判斷方向
+        """
         if cur_point is None:
             return None, []
         
         hits = []
-        best_y = float('inf')
+        best_dist = float('inf')
         best_point = None
         
+        # 【修正】判斷是否是水平線
+        is_horizontal = abs(a) < 1e-9
+        
+        if is_horizontal:
+            # 水平線：根據相對位置決定方向
+            if abs(cur_left.x - cur_right.x) > 1e-5:
+                # x 座標不同：往左邊的 site 方向走
+                go_left = cur_left.x < cur_right.x
+            else:
+                # 【修正 v3】x 座標相同：根據 cur_point 的位置判斷
+                # 如果 cur_point 在右邊（x 較大），往左走
+                mid_x = (cur_left.x + cur_right.x) / 2
+                go_left = cur_point.x > mid_x
+        
         def check_side(edges, side, current_site, sites):
-            nonlocal best_y, best_point, hits
+            nonlocal best_dist, best_point, hits
             for edge in edges:
                 if not edge.start or not edge.end:
                     continue
                 
                 intersection = self._line_segment_intersection(a, b, c, edge)
-                if intersection and intersection.y > cur_point.y + 1e-5:
-                    dist = intersection.y
-                    
-                    if dist < best_y - 1e-5:
-                        best_y = dist
+                if intersection is None:
+                    continue
+                
+                # 【修正】判斷是否在前進方向上
+                if is_horizontal:
+                    # 水平線：用 x 座標判斷
+                    if go_left:
+                        is_forward = intersection.x < cur_point.x - 1e-5
+                        dist = cur_point.x - intersection.x
+                    else:
+                        is_forward = intersection.x > cur_point.x + 1e-5
+                        dist = intersection.x - cur_point.x
+                else:
+                    # 非水平線：用 y 座標判斷
+                    is_forward = intersection.y > cur_point.y + 1e-5
+                    dist = intersection.y - cur_point.y
+                
+                if is_forward and dist > 0:
+                    if dist < best_dist - 1e-5:
+                        best_dist = dist
                         best_point = intersection
                         hits = []
                         other = self._get_other_site(edge, current_site, sites)
                         if other:
                             hits.append((edge, side, other))
-                    elif abs(dist - best_y) < 1e-5:
+                    elif abs(dist - best_dist) < 1e-5:
                         other = self._get_other_site(edge, current_site, sites)
                         if other:
                             hits.append((edge, side, other))
@@ -490,9 +550,20 @@ class VoronoiDC:
         check_side(left_edges, 'left', cur_left, left_sites)
         check_side(right_edges, 'right', cur_right, right_sites)
         
-        boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
-        if boundary_pt and boundary_pt.y > cur_point.y + 1e-5:
-            if boundary_pt.y < best_y - 1e-5:
+        # 檢查邊界
+        if is_horizontal:
+            if go_left:
+                boundary_pt = Point(0, cur_point.y)
+                boundary_dist = cur_point.x
+            else:
+                boundary_pt = Point(self.canvas_width, cur_point.y)
+                boundary_dist = self.canvas_width - cur_point.x
+        else:
+            boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
+            boundary_dist = boundary_pt.y - cur_point.y if boundary_pt else float('inf')
+        
+        if boundary_pt and boundary_dist > 1e-5:
+            if boundary_dist < best_dist - 1e-5:
                 return boundary_pt, []
         
         return best_point, hits
@@ -607,4 +678,4 @@ class VoronoiDC:
         return -margin <= p.x <= self.canvas_width + margin and -margin <= p.y <= self.canvas_height + margin
 
 
-print("Divide-and-Conquer 演算法載入完成！")
+print("Divide-and-Conquer 演算法載入完成！（v3: 完整修正水平 hyperplane 問題）")

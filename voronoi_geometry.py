@@ -224,7 +224,7 @@ def _find_lower_tangent_idx(left_hull: List[Point], right_hull: List[Point]) -> 
            (abs(right_hull[i].x - right_hull[right_idx].x) < 1e-9 and right_hull[i].y > right_hull[right_idx].y):
             right_idx = i
     
-    n_left, n_right = len(left_hull), len(right_hull)
+        n_left, n_right = len(left_hull), len(right_hull)
     
     done = False
     while not done:

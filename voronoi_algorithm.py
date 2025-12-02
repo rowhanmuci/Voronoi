@@ -3,8 +3,8 @@ Voronoi Diagram - Divide and Conquer 演算法
 完整實作包含 merge 演算法
 
 【修正記錄】
-v2: 修正水平 hyperplane 時無法找到交點的問題
-    當中垂線是水平線 (a ≈ 0) 時，需要用 x 座標判斷前進方向
+v5: 修正邊的 site 資訊複製問題
+    在 _trace_chain 中正確複製 site_left 和 site_right
 """
 from typing import List, Tuple, Optional
 from voronoi_geometry import Point, Edge, VoronoiDiagram, perpendicular_bisector, line_intersection, convex_hull, ccw, circumcenter, merge_convex_hulls
@@ -212,24 +212,20 @@ class VoronoiDC:
     
     def _merge(self, left_vd: VoronoiDiagram, right_vd: VoronoiDiagram,
                left_hull: List[Point], right_hull: List[Point]) -> Tuple[VoronoiDiagram, List[Edge]]:
-        """合併左右兩個 Voronoi diagram"""
+        """合併左右兩個 Voronoi diagram - 使用完整凸包策略"""
         merged = VoronoiDiagram()
         merged.sites = left_vd.sites + right_vd.sites
         
-        if left_hull is None:
-            left_hull = convex_hull(left_vd.sites)
-        if right_hull is None:
-            right_hull = convex_hull(right_vd.sites)
+        # 計算完整的合併凸包
+        full_hull = merge_convex_hulls(left_hull, right_hull)
         
-        upper_left, upper_right = self._find_upper_tangent(left_hull, right_hull)
-        lower_left, lower_right = self._find_lower_tangent(left_hull, right_hull)
-        
-        left_edge_sites = self._build_edge_site_map(left_vd)
-        right_edge_sites = self._build_edge_site_map(right_vd)
+        # 從完整凸包中找出上下切線
+        upper_left, upper_right, lower_left, lower_right = self._find_tangents_from_full_hull(
+            full_hull, left_vd.sites, right_vd.sites
+        )
         
         chain_edges, left_edges, right_edges = self._trace_chain(
             left_vd, right_vd,
-            left_edge_sites, right_edge_sites,
             upper_left, upper_right,
             lower_left, lower_right
         )
@@ -246,111 +242,93 @@ class VoronoiDC:
         
         return merged, chain_edges
     
-    def _build_edge_site_map(self, vd: VoronoiDiagram) -> dict:
-        """建立每條邊對應的兩個 site"""
-        edge_map = {}
-        for i, edge in enumerate(vd.edges):
-            if edge.site_left and edge.site_right:
-                edge_map[i] = (edge.site_left, edge.site_right)
-            else:
-                sites = self._infer_edge_sites(edge, vd.sites)
-                if sites:
-                    edge_map[i] = sites
-        return edge_map
-    
-    def _infer_edge_sites(self, edge: Edge, sites: List[Point]) -> Optional[Tuple[Point, Point]]:
-        """根據邊的位置推斷它屬於哪兩個 site"""
-        if not edge.start or not edge.end:
-            return None
+    def _find_tangents_from_full_hull(self, full_hull: List[Point], 
+                                       left_sites: List[Point], 
+                                       right_sites: List[Point]) -> Tuple[Point, Point, Point, Point]:
+        """
+        從完整凸包中找出上下切線
+        切線就是連接左右兩群點的凸包邊
+        """
+        n = len(full_hull)
+        if n < 2:
+            return (left_sites[0], right_sites[0], left_sites[0], right_sites[0])
         
-        mid_x = (edge.start.x + edge.end.x) / 2
-        mid_y = (edge.start.y + edge.end.y) / 2
-        mid = Point(mid_x, mid_y)
+        # 建立點集合以快速判斷
+        left_set = set(left_sites)
+        right_set = set(right_sites)
         
-        distances = [(s.distance_to(mid), s) for s in sites]
-        distances.sort(key=lambda x: x[0])
+        upper_left = None
+        upper_right = None
+        lower_left = None
+        lower_right = None
+        min_y_sum = float('inf')
+        max_y_sum = float('-inf')
         
-        if len(distances) >= 2:
-            return (distances[0][1], distances[1][1])
-        return None
-    
-    def _find_upper_tangent(self, left_hull: List[Point], right_hull: List[Point]) -> Tuple[Point, Point]:
-        """找上切線"""
-        if not left_hull or not right_hull:
-            return (left_hull[0] if left_hull else Point(0, 0), 
-                    right_hull[0] if right_hull else Point(0, 0))
+        # 在凸包上找連接左右點群的邊
+        for i in range(n):
+            p1 = full_hull[i]
+            p2 = full_hull[(i + 1) % n]
+            
+            # 檢查這條邊是否連接左右兩群
+            if (p1 in left_set and p2 in right_set):
+                y_sum = p1.y + p2.y
+                # 上切線：y 座標和較小
+                if y_sum < min_y_sum:
+                    min_y_sum = y_sum
+                    upper_left = p1
+                    upper_right = p2
+                # 下切線：y 座標和較大
+                if y_sum > max_y_sum:
+                    max_y_sum = y_sum
+                    lower_left = p1
+                    lower_right = p2
+                    
+            elif (p1 in right_set and p2 in left_set):
+                y_sum = p1.y + p2.y
+                # 上切線：y 座標和較小
+                if y_sum < min_y_sum:
+                    min_y_sum = y_sum
+                    upper_left = p2
+                    upper_right = p1
+                # 下切線：y 座標和較大
+                if y_sum > max_y_sum:
+                    max_y_sum = y_sum
+                    lower_left = p2
+                    lower_right = p1
         
-        left_idx = max(range(len(left_hull)), key=lambda i: (left_hull[i].x, -left_hull[i].y))
-        right_idx = min(range(len(right_hull)), key=lambda i: (right_hull[i].x, right_hull[i].y))
+        # 如果沒找到，使用備用方案
+        if upper_left is None or upper_right is None:
+            # 找最上方的左右點
+            upper_left = min(left_sites, key=lambda p: (p.y, -p.x))
+            upper_right = min(right_sites, key=lambda p: (p.y, p.x))
         
-        n_left, n_right = len(left_hull), len(right_hull)
+        if lower_left is None or lower_right is None:
+            # 找最下方的左右點
+            lower_left = max(left_sites, key=lambda p: (p.y, -p.x))
+            lower_right = max(right_sites, key=lambda p: (p.y, p.x))
         
-        done = False
-        while not done:
-            done = True
-            while n_left > 1:
-                next_idx = (left_idx - 1 + n_left) % n_left
-                if ccw(right_hull[right_idx], left_hull[left_idx], left_hull[next_idx]) > 1e-9:
-                    left_idx = next_idx
-                    done = False
-                else:
-                    break
-            while n_right > 1:
-                next_idx = (right_idx + 1) % n_right
-                if ccw(left_hull[left_idx], right_hull[right_idx], right_hull[next_idx]) < -1e-9:
-                    right_idx = next_idx
-                    done = False
-                else:
-                    break
-        
-        return left_hull[left_idx], right_hull[right_idx]
-    
-    def _find_lower_tangent(self, left_hull: List[Point], right_hull: List[Point]) -> Tuple[Point, Point]:
-        """找下切線"""
-        if not left_hull or not right_hull:
-            return (left_hull[0] if left_hull else Point(0, 0), 
-                    right_hull[0] if right_hull else Point(0, 0))
-        
-        left_idx = max(range(len(left_hull)), key=lambda i: (left_hull[i].x, left_hull[i].y))
-        right_idx = min(range(len(right_hull)), key=lambda i: (right_hull[i].x, -right_hull[i].y))
-        
-        n_left, n_right = len(left_hull), len(right_hull)
-        
-        done = False
-        while not done:
-            done = True
-            while n_left > 1:
-                next_idx = (left_idx + 1) % n_left
-                if ccw(right_hull[right_idx], left_hull[left_idx], left_hull[next_idx]) < -1e-9:
-                    left_idx = next_idx
-                    done = False
-                else:
-                    break
-            while n_right > 1:
-                next_idx = (right_idx - 1 + n_right) % n_right
-                if ccw(left_hull[left_idx], right_hull[right_idx], right_hull[next_idx]) > 1e-9:
-                    right_idx = next_idx
-                    done = False
-                else:
-                    break
-        
-        return left_hull[left_idx], right_hull[right_idx]
+        return upper_left, upper_right, lower_left, lower_right
     
     def _trace_chain(self, left_vd: VoronoiDiagram, right_vd: VoronoiDiagram,
-                     left_edge_sites: dict, right_edge_sites: dict,
                      upper_left: Point, upper_right: Point,
                      lower_left: Point, lower_right: Point) -> Tuple[List[Edge], List[Edge], List[Edge]]:
-        """追蹤 dividing chain"""
+        """追蹤 dividing chain - 改進版v5：正確複製 site 資訊"""
         chain_edges = []
-        left_edges = [Edge(e.start, e.end) for e in left_vd.edges]
-        right_edges = [Edge(e.start, e.end) for e in right_vd.edges]
         
-        for i, e in enumerate(left_edges):
-            if i in left_edge_sites:
-                e.site_left, e.site_right = left_edge_sites[i]
-        for i, e in enumerate(right_edges):
-            if i in right_edge_sites:
-                e.site_left, e.site_right = right_edge_sites[i]
+        # 【修正 v5】正確複製邊的所有資訊，包括 site_left 和 site_right
+        left_edges = []
+        for e in left_vd.edges:
+            new_edge = Edge(e.start, e.end)
+            new_edge.site_left = e.site_left
+            new_edge.site_right = e.site_right
+            left_edges.append(new_edge)
+        
+        right_edges = []
+        for e in right_vd.edges:
+            new_edge = Edge(e.start, e.end)
+            new_edge.site_left = e.site_left
+            new_edge.site_right = e.site_right
+            right_edges.append(new_edge)
         
         cur_left = upper_left
         cur_right = upper_right
@@ -369,8 +347,8 @@ class VoronoiDC:
             iteration += 1
             a, b, c = perpendicular_bisector(cur_left, cur_right)
             
-            # 【修正】使用新的 _find_next_hits 函數
-            next_point, hits = self._find_next_hits(
+            # 改進版：檢查所有邊
+            next_point, hits = self._find_next_hits_all_edges(
                 cur_point, a, b, c,
                 cur_left, cur_right,
                 left_edges, right_edges,
@@ -419,17 +397,97 @@ class VoronoiDC:
         
         return chain_edges, left_edges, right_edges
     
+    def _find_next_hits_all_edges(self, cur_point: Point, a: float, b: float, c: float,
+                                   cur_left: Point, cur_right: Point,
+                                   left_edges: List[Edge], right_edges: List[Edge],
+                                   left_sites: List[Point], right_sites: List[Point]):
+        """
+        改進版：沿中垂線找最近交點，檢查所有邊
+        """
+        if cur_point is None:
+            return None, []
+        
+        hits = []
+        best_dist = float('inf')
+        best_point = None
+        
+        # 判斷是否是水平線
+        is_horizontal = abs(a) < 1e-9
+        
+        if is_horizontal:
+            if abs(cur_left.x - cur_right.x) > 1e-5:
+                go_left = cur_left.x < cur_right.x
+            else:
+                mid_x = (cur_left.x + cur_right.x) / 2
+                go_left = cur_point.x > mid_x
+        
+        def check_all_edges(edges, side, current_site, all_sites):
+            """檢查所有邊，不限定特定的 site"""
+            nonlocal best_dist, best_point, hits
+            
+            for edge in edges:
+                if not edge.start or not edge.end:
+                    continue
+                
+                intersection = self._line_segment_intersection(a, b, c, edge)
+                if intersection is None:
+                    continue
+                
+                # 判斷是否在前進方向上
+                if is_horizontal:
+                    if go_left:
+                        is_forward = intersection.x < cur_point.x - 1e-5
+                        dist = cur_point.x - intersection.x
+                    else:
+                        is_forward = intersection.x > cur_point.x + 1e-5
+                        dist = intersection.x - cur_point.x
+                else:
+                    is_forward = intersection.y > cur_point.y + 1e-5
+                    dist = intersection.y - cur_point.y
+                
+                if is_forward and dist > 0:
+                    # 找出這條邊的另一個 site
+                    other = self._get_other_site(edge, current_site, all_sites)
+                    
+                    if other:
+                        if dist < best_dist - 1e-5:
+                            best_dist = dist
+                            best_point = intersection
+                            hits = [(edge, side, other)]
+                        elif abs(dist - best_dist) < 1e-5:
+                            hits.append((edge, side, other))
+        
+        # 檢查左右所有邊
+        check_all_edges(left_edges, 'left', cur_left, left_sites)
+        check_all_edges(right_edges, 'right', cur_right, right_sites)
+        
+        # 檢查邊界
+        if is_horizontal:
+            if go_left:
+                boundary_pt = Point(0, cur_point.y)
+                boundary_dist = cur_point.x
+            else:
+                boundary_pt = Point(self.canvas_width, cur_point.y)
+                boundary_dist = self.canvas_width - cur_point.x
+        else:
+            boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
+            boundary_dist = boundary_pt.y - cur_point.y if boundary_pt else float('inf')
+        
+        if boundary_pt and boundary_dist > 1e-5:
+            if boundary_dist < best_dist - 1e-5:
+                return boundary_pt, []
+        
+        return best_point, hits
+    
     def _find_chain_end_boundary(self, a: float, b: float, c: float, 
                                   cur_point: Point, cur_left: Point, cur_right: Point) -> Optional[Point]:
         """找 chain 結束時的邊界點，處理水平和非水平線"""
         is_horizontal = abs(a) < 1e-9
         
         if is_horizontal:
-            # 水平線：往 x 方向找邊界
             if abs(cur_left.x - cur_right.x) > 1e-5:
                 go_left = cur_left.x < cur_right.x
             else:
-                # x 座標相同：根據 cur_point 的位置判斷
                 mid_x = (cur_left.x + cur_right.x) / 2
                 go_left = cur_point.x > mid_x
             
@@ -438,7 +496,6 @@ class VoronoiDC:
             else:
                 return Point(self.canvas_width, cur_point.y)
         else:
-            # 非水平線：往下找邊界
             boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
             if boundary_pt is None:
                 intersections = self._line_canvas_intersections(a, b, c)
@@ -474,99 +531,6 @@ class VoronoiDC:
                     return Point(self.canvas_width, y)
         
         return None
-    
-    def _find_next_hits(self, cur_point: Point, a: float, b: float, c: float,
-                        cur_left: Point, cur_right: Point,
-                        left_edges: List[Edge], right_edges: List[Edge],
-                        left_sites: List[Point], right_sites: List[Point]):
-        """
-        沿中垂線往前進方向找最近的交點，支援多重撞擊
-        
-        【修正 v2】處理水平線的情況：
-        - 當 a ≈ 0 時，直線是水平的 (y = -c/b)
-        - 此時需要用 x 座標判斷前進方向
-        
-        【修正 v3】處理 cur_left.x == cur_right.x 的情況：
-        - 當兩點 x 座標相同時，根據 cur_point 的位置判斷方向
-        """
-        if cur_point is None:
-            return None, []
-        
-        hits = []
-        best_dist = float('inf')
-        best_point = None
-        
-        # 【修正】判斷是否是水平線
-        is_horizontal = abs(a) < 1e-9
-        
-        if is_horizontal:
-            # 水平線：根據相對位置決定方向
-            if abs(cur_left.x - cur_right.x) > 1e-5:
-                # x 座標不同：往左邊的 site 方向走
-                go_left = cur_left.x < cur_right.x
-            else:
-                # 【修正 v3】x 座標相同：根據 cur_point 的位置判斷
-                # 如果 cur_point 在右邊（x 較大），往左走
-                mid_x = (cur_left.x + cur_right.x) / 2
-                go_left = cur_point.x > mid_x
-        
-        def check_side(edges, side, current_site, sites):
-            nonlocal best_dist, best_point, hits
-            for edge in edges:
-                if not edge.start or not edge.end:
-                    continue
-                
-                intersection = self._line_segment_intersection(a, b, c, edge)
-                if intersection is None:
-                    continue
-                
-                # 【修正】判斷是否在前進方向上
-                if is_horizontal:
-                    # 水平線：用 x 座標判斷
-                    if go_left:
-                        is_forward = intersection.x < cur_point.x - 1e-5
-                        dist = cur_point.x - intersection.x
-                    else:
-                        is_forward = intersection.x > cur_point.x + 1e-5
-                        dist = intersection.x - cur_point.x
-                else:
-                    # 非水平線：用 y 座標判斷
-                    is_forward = intersection.y > cur_point.y + 1e-5
-                    dist = intersection.y - cur_point.y
-                
-                if is_forward and dist > 0:
-                    if dist < best_dist - 1e-5:
-                        best_dist = dist
-                        best_point = intersection
-                        hits = []
-                        other = self._get_other_site(edge, current_site, sites)
-                        if other:
-                            hits.append((edge, side, other))
-                    elif abs(dist - best_dist) < 1e-5:
-                        other = self._get_other_site(edge, current_site, sites)
-                        if other:
-                            hits.append((edge, side, other))
-        
-        check_side(left_edges, 'left', cur_left, left_sites)
-        check_side(right_edges, 'right', cur_right, right_sites)
-        
-        # 檢查邊界
-        if is_horizontal:
-            if go_left:
-                boundary_pt = Point(0, cur_point.y)
-                boundary_dist = cur_point.x
-            else:
-                boundary_pt = Point(self.canvas_width, cur_point.y)
-                boundary_dist = self.canvas_width - cur_point.x
-        else:
-            boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
-            boundary_dist = boundary_pt.y - cur_point.y if boundary_pt else float('inf')
-        
-        if boundary_pt and boundary_dist > 1e-5:
-            if boundary_dist < best_dist - 1e-5:
-                return boundary_pt, []
-        
-        return best_point, hits
     
     def _line_segment_intersection(self, a: float, b: float, c: float, edge: Edge) -> Optional[Point]:
         """計算直線與線段的交點"""
@@ -678,4 +642,4 @@ class VoronoiDC:
         return -margin <= p.x <= self.canvas_width + margin and -margin <= p.y <= self.canvas_height + margin
 
 
-print("Divide-and-Conquer 演算法載入完成！（v3: 完整修正水平 hyperplane 問題）")
+print("Divide-and-Conquer 演算法載入完成！（v5: 修正邊的 site 資訊複製）")

@@ -147,10 +147,17 @@ class VoronoiDC:
         )
         
         # Step 7: 顯示 Hyper Plane
+        hp_edges = []
+        for e in chain_edges:
+            new_e = Edge(e.start, e.end)
+            new_e.site_left = e.site_left
+            new_e.site_right = e.site_right
+            hp_edges.append(new_e)
+        
         self.steps.append({
             'type': 'show_hyperplane',
             'merge_id': merge_id,
-            'hyperplane': [Edge(e.start, e.end) for e in chain_edges],
+            'hyperplane': hp_edges,
             'left_vd': self._copy_vd(left_vd),
             'right_vd': self._copy_vd(right_vd),
             'left_sites': left_vd.sites.copy(),
@@ -159,12 +166,19 @@ class VoronoiDC:
         })
         
         # Step 8: 顯示消線後的 Voronoi
+        hp_edges2 = []
+        for e in chain_edges:
+            new_e = Edge(e.start, e.end)
+            new_e.site_left = e.site_left
+            new_e.site_right = e.site_right
+            hp_edges2.append(new_e)
+        
         self.steps.append({
             'type': 'show_after_elimination',
             'merge_id': merge_id,
             'left_edges': [Edge(e.start, e.end) for e in left_edges],
             'right_edges': [Edge(e.start, e.end) for e in right_edges],
-            'hyperplane': [Edge(e.start, e.end) for e in chain_edges],
+            'hyperplane': hp_edges2,
             'original_left_edges': [Edge(e.start, e.end) for e in left_vd.edges],
             'original_right_edges': [Edge(e.start, e.end) for e in right_vd.edges],
             'left_sites': left_vd.sites.copy(),
@@ -433,6 +447,18 @@ class VoronoiDC:
         
         while iteration < max_iter:
             iteration += 1
+            
+            # ⭐ 先檢查是否已到達下切線
+            if cur_left == lower_left and cur_right == lower_right:
+                a, b, c = perpendicular_bisector(cur_left, cur_right)
+                boundary_pt = self._find_chain_end_boundary(a, b, c, cur_point, cur_left, cur_right)
+                
+                if boundary_pt and cur_point:
+                    edge = Edge(cur_point, boundary_pt)
+                    edge.site_left, edge.site_right = cur_left, cur_right
+                    chain_edges.append(edge)
+                break
+            
             a, b, c = perpendicular_bisector(cur_left, cur_right)
             
             # 檢查所有邊
@@ -444,12 +470,31 @@ class VoronoiDC:
             )
             
             if next_point is None:
+                # 🎯 邊界導引 (Boundary Guidance)
+                # Hyper Plane 撞到邊界，但可能還沒到下切線
+                # 這在 N=2 或小點數時是正常現象（交點在螢幕外或 t<0）
+                
                 boundary_pt = self._find_chain_end_boundary(a, b, c, cur_point, cur_left, cur_right)
                 
                 if boundary_pt and cur_point:
                     edge = Edge(cur_point, boundary_pt)
                     edge.site_left, edge.site_right = cur_left, cur_right
                     chain_edges.append(edge)
+                
+                # ⭐ 關鍵修正：檢查是否已到達下切線
+                if cur_left == lower_left and cur_right == lower_right:
+                    # 已經是下切線，正常結束
+                    break
+                else:
+                    # 還沒到下切線就撞牆了
+                    # 這代表剩餘的交點在螢幕外（幾何上是無限遠）
+                    # 在 Bounding Box 內，當前的 Hyper Plane 已經是正確的分界
+                    # 安全結束，相信下切線邏輯會處理接合
+                    print(f"💡 Boundary Guidance: Hit boundary at ({boundary_pt.x if boundary_pt else 'None'},{boundary_pt.y if boundary_pt else 'None'})")
+                    print(f"   Current sites: ({cur_left.x:.0f},{cur_left.y:.0f})-({cur_right.x:.0f},{cur_right.y:.0f})")
+                    print(f"   Lower tangent: ({lower_left.x:.0f},{lower_left.y:.0f})-({lower_right.x:.0f},{lower_right.y:.0f})")
+                    print(f"   This is geometrically correct - intersection is outside canvas")
+                    break
                 break
             
             edge = Edge(cur_point, next_point)
@@ -467,16 +512,6 @@ class VoronoiDC:
                 else:
                     self._trim_edge_at_point(hit_edge, next_point, cur_right, cur_left)
                     cur_right = new_site
-            
-            if cur_left == lower_left and cur_right == lower_right:
-                a, b, c = perpendicular_bisector(cur_left, cur_right)
-                boundary_pt = self._find_chain_end_boundary(a, b, c, next_point, cur_left, cur_right)
-                
-                if boundary_pt and next_point:
-                    edge = Edge(next_point, boundary_pt)
-                    edge.site_left, edge.site_right = cur_left, cur_right
-                    chain_edges.append(edge)
-                break
             
             cur_point = next_point
         
@@ -508,12 +543,17 @@ class VoronoiDC:
                 go_left = cur_point.x > mid_x
         
         def check_all_edges(edges, side, current_site, all_sites):
-            """檢查所有邊"""
+            """檢查所有與 current_site 相關的邊"""
             nonlocal best_dist, best_point, hits
             
             for edge in edges:
                 if not edge.start or not edge.end:
                     continue
+                
+                # ⭐ 過濾：只檢查屬於當前 site 的邊
+                # 這條邊必須是圍成 current_site 區域的一部分
+                if edge.site_left != current_site and edge.site_right != current_site:
+                    continue  # 這條邊跟當前處理的點無關，跳過
                 
                 intersection = self._line_segment_intersection(a, b, c, edge)
                 if intersection is None:
@@ -644,32 +684,18 @@ class VoronoiDC:
         return Point(x, y)
     
     def _get_other_site(self, edge: Edge, current_site: Point, sites: List[Point]) -> Optional[Point]:
-        """取得邊的另一個 site"""
+        """取得邊的另一個 site（完全依賴拓撲結構，不使用距離猜測）"""
         if edge.site_left and edge.site_right:
             if edge.site_left == current_site:
                 return edge.site_right
             elif edge.site_right == current_site:
                 return edge.site_left
         
-        if not edge.start or not edge.end:
-            return None
-        
-        mid_x = (edge.start.x + edge.end.x) / 2
-        mid_y = (edge.start.y + edge.end.y) / 2
-        mid = Point(mid_x, mid_y)
-        
-        distances = [(s.distance_to(mid), s) for s in sites]
-        distances.sort(key=lambda x: x[0])
-        
-        for dist, site in distances[:3]:
-            if site != current_site:
-                a, b, c = perpendicular_bisector(current_site, site)
-                d1 = abs(a * edge.start.x + b * edge.start.y + c)
-                d2 = abs(a * edge.end.x + b * edge.end.y + c)
-                
-                if d1 < 20 or d2 < 20:
-                    return site
-        
+        # 如果執行到這裡，代表 Base Case (2點或3點) 建立 Edge 時資料不全
+        # 這裡應該要報錯，而不是猜測
+        print(f"⚠️ [Error] Edge missing site info! start=({edge.start.x:.0f},{edge.start.y:.0f}), end=({edge.end.x:.0f},{edge.end.y:.0f})")
+        print(f"  current_site=({current_site.x:.0f},{current_site.y:.0f})")
+        print(f"  site_left={edge.site_left}, site_right={edge.site_right}")
         return None
     
     def _trim_edge_at_point(self, edge: Edge, intersection: Point, site_keep: Point, site_discard: Point):

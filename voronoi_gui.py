@@ -280,7 +280,7 @@ class VoronoiGUI:
         self.canvas.create_oval(x - size, y - size, x + size, y + size, fill=color, outline='black', width=1)
     
     
-    def draw_convex_hull(self, hull: list, color='purple', width=2, dash=None):
+    def draw_convex_hull(self, hull: list, color='gray', width=1, dash=(2, 2)):
         """畫 convex hull
         
         Args:
@@ -399,7 +399,7 @@ class VoronoiGUI:
                 
                 # 畫最終 convex hull（紫色實線）
                 if 'merged_hull' in last_step:
-                    self.draw_convex_hull(last_step['merged_hull'], color='purple', width=2)
+                    self.draw_convex_hull(last_step['merged_hull'], color='gray', width=1, dash=(2, 2))
             
             self.status_bar.config(text="Algorithm completed! Click 'Step' again to restart.")
             self.step_info.config(text=f"Completed ({len(self.algorithm.steps)} steps)")

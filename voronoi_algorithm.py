@@ -3,8 +3,15 @@ Voronoi Diagram - Divide and Conquer 演算法
 完整實作包含 merge 演算法
 
 【修正記錄】
-v5: 修正邊的 site 資訊複製問題
-    在 _trace_chain 中正確複製 site_left 和 site_right
+v7: 加入詳細的 step-by-step 記錄
+    記錄每個合併階段的詳細資訊，包括：
+    - 左右 VD
+    - 左右 Convex Hull
+    - 合併後的 Convex Hull（重要！）
+    - 上下切線
+    - Hyper Plane
+    - 消線後的 VD
+    - 最終合併結果
 """
 from typing import List, Tuple, Optional
 from voronoi_geometry import Point, Edge, VoronoiDiagram, perpendicular_bisector, line_intersection, convex_hull, ccw, circumcenter, merge_convex_hulls
@@ -17,7 +24,7 @@ class VoronoiDC:
     def __init__(self, canvas_width: int = 600, canvas_height: int = 600):
         self.canvas_width = canvas_width
         self.canvas_height = canvas_height
-        self.steps = []
+        self.steps = []  # 詳細步驟記錄
     
     def build(self, points: List[Point]) -> VoronoiDiagram:
         """建構 Voronoi diagram"""
@@ -63,21 +70,129 @@ class VoronoiDC:
         left_vd, left_hull = self._divide_conquer(left_points)
         right_vd, right_hull = self._divide_conquer(right_points)
         
+        # === 開始記錄詳細步驟 ===
+        merge_id = len(self.steps)  # 用於標識這是第幾次合併
+        
+        # Step 1: 顯示左邊的 Voronoi
+        self.steps.append({
+            'type': 'show_left_vd',
+            'merge_id': merge_id,
+            'vd': self._copy_vd(left_vd),
+            'sites': left_vd.sites.copy(),
+            'description': f'左側 Voronoi Diagram ({len(left_vd.sites)} 點)'
+        })
+        
+        # Step 2: 顯示右邊的 Voronoi
+        self.steps.append({
+            'type': 'show_right_vd',
+            'merge_id': merge_id,
+            'vd': self._copy_vd(right_vd),
+            'sites': right_vd.sites.copy(),
+            'description': f'右側 Voronoi Diagram ({len(right_vd.sites)} 點)'
+        })
+        
+        # Step 3: 顯示左邊的 Convex Hull
+        self.steps.append({
+            'type': 'show_left_hull',
+            'merge_id': merge_id,
+            'hull': left_hull.copy(),
+            'sites': left_vd.sites.copy(),
+            'description': '左側 Convex Hull'
+        })
+        
+        # Step 4: 顯示右邊的 Convex Hull
+        self.steps.append({
+            'type': 'show_right_hull',
+            'merge_id': merge_id,
+            'hull': right_hull.copy(),
+            'sites': right_vd.sites.copy(),
+            'description': '右側 Convex Hull'
+        })
+        
         # 合併凸包
         merged_hull = merge_convex_hulls(left_hull, right_hull)
         
-        # Merge
-        merged_vd, chain_edges = self._merge(left_vd, right_vd, left_hull, right_hull)
-        
-        # 記錄步驟
+        # Step 5: 顯示合併後的 Convex Hull（重要！）
         self.steps.append({
-            'left_sites': left_vd.sites,
-            'right_sites': right_vd.sites,
-            'left_hull': left_hull.copy(),
-            'right_hull': right_hull.copy(),
+            'type': 'show_merged_hull',
+            'merge_id': merge_id,
+            'hull': merged_hull.copy(),
+            'left_sites': left_vd.sites.copy(),
+            'right_sites': right_vd.sites.copy(),
+            'description': '合併後的 Convex Hull'
+        })
+        
+        # 從完整凸包中找出上下切線
+        upper_left, upper_right, lower_left, lower_right = self._find_tangents_from_full_hull(
+            merged_hull, left_vd.sites, right_vd.sites
+        )
+        
+        # Step 6: 顯示上下切線
+        self.steps.append({
+            'type': 'show_tangents',
+            'merge_id': merge_id,
+            'upper_tangent': (upper_left, upper_right),
+            'lower_tangent': (lower_left, lower_right),
             'merged_hull': merged_hull.copy(),
-            'merged': self._copy_vd(merged_vd),
-            'hyperplane': [Edge(e.start, e.end) for e in chain_edges]
+            'left_sites': left_vd.sites.copy(),
+            'right_sites': right_vd.sites.copy(),
+            'description': '上下切線'
+        })
+        
+        # Merge
+        chain_edges, left_edges, right_edges = self._trace_chain(
+            left_vd, right_vd,
+            upper_left, upper_right,
+            lower_left, lower_right
+        )
+        
+        # Step 7: 顯示 Hyper Plane
+        self.steps.append({
+            'type': 'show_hyperplane',
+            'merge_id': merge_id,
+            'hyperplane': [Edge(e.start, e.end) for e in chain_edges],
+            'left_vd': self._copy_vd(left_vd),
+            'right_vd': self._copy_vd(right_vd),
+            'left_sites': left_vd.sites.copy(),
+            'right_sites': right_vd.sites.copy(),
+            'description': 'Hyper Plane 路徑'
+        })
+        
+        # Step 8: 顯示消線後的 Voronoi
+        self.steps.append({
+            'type': 'show_after_elimination',
+            'merge_id': merge_id,
+            'left_edges': [Edge(e.start, e.end) for e in left_edges],
+            'right_edges': [Edge(e.start, e.end) for e in right_edges],
+            'hyperplane': [Edge(e.start, e.end) for e in chain_edges],
+            'original_left_edges': [Edge(e.start, e.end) for e in left_vd.edges],
+            'original_right_edges': [Edge(e.start, e.end) for e in right_vd.edges],
+            'left_sites': left_vd.sites.copy(),
+            'right_sites': right_vd.sites.copy(),
+            'description': '消線後的結果'
+        })
+        
+        # 建立最終合併結果
+        merged_vd = VoronoiDiagram()
+        merged_vd.sites = left_vd.sites + right_vd.sites
+        merged_vd.edges = left_edges + right_edges + chain_edges
+        
+        for edge in merged_vd.edges:
+            if edge.start and self._point_in_canvas(edge.start):
+                if edge.start not in merged_vd.vertices:
+                    merged_vd.vertices.append(edge.start)
+            if edge.end and self._point_in_canvas(edge.end):
+                if edge.end not in merged_vd.vertices:
+                    merged_vd.vertices.append(edge.end)
+        
+        # Step 9: 最終合併結果
+        self.steps.append({
+            'type': 'show_merged_result',
+            'merge_id': merge_id,
+            'merged_vd': self._copy_vd(merged_vd),
+            'merged_hull': merged_hull.copy(),  # 保留合併後的凸包！
+            'all_sites': merged_vd.sites.copy(),
+            'description': '合併完成'
         })
         
         return merged_vd, merged_hull
@@ -87,7 +202,12 @@ class VoronoiDC:
         new_vd = VoronoiDiagram()
         new_vd.sites = vd.sites.copy()
         new_vd.vertices = vd.vertices.copy()
-        new_vd.edges = [Edge(e.start, e.end) for e in vd.edges]
+        new_vd.edges = []
+        for e in vd.edges:
+            new_edge = Edge(e.start, e.end)
+            new_edge.site_left = e.site_left
+            new_edge.site_right = e.site_right
+            new_vd.edges.append(new_edge)
         return new_vd
     
     def _voronoi_one_point(self, p: Point) -> VoronoiDiagram:
@@ -210,38 +330,6 @@ class VoronoiDC:
         
         return best_pt
     
-    def _merge(self, left_vd: VoronoiDiagram, right_vd: VoronoiDiagram,
-               left_hull: List[Point], right_hull: List[Point]) -> Tuple[VoronoiDiagram, List[Edge]]:
-        """合併左右兩個 Voronoi diagram - 使用完整凸包策略"""
-        merged = VoronoiDiagram()
-        merged.sites = left_vd.sites + right_vd.sites
-        
-        # 計算完整的合併凸包
-        full_hull = merge_convex_hulls(left_hull, right_hull)
-        
-        # 從完整凸包中找出上下切線
-        upper_left, upper_right, lower_left, lower_right = self._find_tangents_from_full_hull(
-            full_hull, left_vd.sites, right_vd.sites
-        )
-        
-        chain_edges, left_edges, right_edges = self._trace_chain(
-            left_vd, right_vd,
-            upper_left, upper_right,
-            lower_left, lower_right
-        )
-        
-        merged.edges = left_edges + right_edges + chain_edges
-        
-        for edge in merged.edges:
-            if edge.start and self._point_in_canvas(edge.start):
-                if edge.start not in merged.vertices:
-                    merged.vertices.append(edge.start)
-            if edge.end and self._point_in_canvas(edge.end):
-                if edge.end not in merged.vertices:
-                    merged.vertices.append(edge.end)
-        
-        return merged, chain_edges
-    
     def _find_tangents_from_full_hull(self, full_hull: List[Point], 
                                        left_sites: List[Point], 
                                        right_sites: List[Point]) -> Tuple[Point, Point, Point, Point]:
@@ -312,10 +400,10 @@ class VoronoiDC:
     def _trace_chain(self, left_vd: VoronoiDiagram, right_vd: VoronoiDiagram,
                      upper_left: Point, upper_right: Point,
                      lower_left: Point, lower_right: Point) -> Tuple[List[Edge], List[Edge], List[Edge]]:
-        """追蹤 dividing chain - 改進版v5：正確複製 site 資訊"""
+        """追蹤 dividing chain"""
         chain_edges = []
         
-        # 【修正 v5】正確複製邊的所有資訊，包括 site_left 和 site_right
+        # 正確複製邊的所有資訊
         left_edges = []
         for e in left_vd.edges:
             new_edge = Edge(e.start, e.end)
@@ -347,7 +435,7 @@ class VoronoiDC:
             iteration += 1
             a, b, c = perpendicular_bisector(cur_left, cur_right)
             
-            # 改進版：檢查所有邊
+            # 檢查所有邊
             next_point, hits = self._find_next_hits_all_edges(
                 cur_point, a, b, c,
                 cur_left, cur_right,
@@ -401,9 +489,7 @@ class VoronoiDC:
                                    cur_left: Point, cur_right: Point,
                                    left_edges: List[Edge], right_edges: List[Edge],
                                    left_sites: List[Point], right_sites: List[Point]):
-        """
-        改進版：沿中垂線找最近交點，檢查所有邊
-        """
+        """沿中垂線找最近交點，檢查所有邊"""
         if cur_point is None:
             return None, []
         
@@ -422,7 +508,7 @@ class VoronoiDC:
                 go_left = cur_point.x > mid_x
         
         def check_all_edges(edges, side, current_site, all_sites):
-            """檢查所有邊，不限定特定的 site"""
+            """檢查所有邊"""
             nonlocal best_dist, best_point, hits
             
             for edge in edges:
@@ -446,7 +532,6 @@ class VoronoiDC:
                     dist = intersection.y - cur_point.y
                 
                 if is_forward and dist > 0:
-                    # 找出這條邊的另一個 site
                     other = self._get_other_site(edge, current_site, all_sites)
                     
                     if other:
@@ -457,7 +542,6 @@ class VoronoiDC:
                         elif abs(dist - best_dist) < 1e-5:
                             hits.append((edge, side, other))
         
-        # 檢查左右所有邊
         check_all_edges(left_edges, 'left', cur_left, left_sites)
         check_all_edges(right_edges, 'right', cur_right, right_sites)
         
@@ -481,7 +565,7 @@ class VoronoiDC:
     
     def _find_chain_end_boundary(self, a: float, b: float, c: float, 
                                   cur_point: Point, cur_left: Point, cur_right: Point) -> Optional[Point]:
-        """找 chain 結束時的邊界點，處理水平和非水平線"""
+        """找 chain 結束時的邊界點"""
         is_horizontal = abs(a) < 1e-9
         
         if is_horizontal:
@@ -589,7 +673,7 @@ class VoronoiDC:
         return None
     
     def _trim_edge_at_point(self, edge: Edge, intersection: Point, site_keep: Point, site_discard: Point):
-        """在交點處裁剪邊，保留靠近 site_keep 的部分"""
+        """在交點處裁剪邊"""
         if not edge.start or not edge.end:
             return
         
@@ -642,4 +726,4 @@ class VoronoiDC:
         return -margin <= p.x <= self.canvas_width + margin and -margin <= p.y <= self.canvas_height + margin
 
 
-print("Divide-and-Conquer 演算法載入完成！（v5: 修正邊的 site 資訊複製）")
+print("Divide-and-Conquer 演算法載入完成！（v7: 詳細 step-by-step 記錄）")

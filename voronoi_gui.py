@@ -114,7 +114,151 @@ class VoronoiGUI:
         self.points_listbox = tk.Listbox(list_frame, font=('Courier', 9), yscrollcommand=scrollbar.set)
         self.points_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.points_listbox.yview)
-    
+    def _render_left_vd(self, step_data):
+        """渲染左側 Voronoi"""
+        vd = step_data['vd']
+        # 只畫邊（藍色）
+        for edge in vd.edges:
+            self.draw_edge(edge, color='blue', width=2)
+        
+        # 突顯左側正在處理的點（大一點，藍色）
+        for site in step_data['sites']:
+            self.draw_point(site, color='blue', size=6)
+
+    def _render_right_vd(self, step_data):
+        """渲染右側 Voronoi"""
+        vd = step_data['vd']
+        # 只畫邊（綠色）
+        for edge in vd.edges:
+            self.draw_edge(edge, color='green', width=2)
+        
+        # 突顯右側正在處理的點（大一點，綠色）
+        for site in step_data['sites']:
+            self.draw_point(site, color='green', size=6)
+
+    def _render_left_hull(self, step_data):
+        """渲染左側 Convex Hull"""
+        # 畫凸包（虛線紫色）
+        self.draw_convex_hull(step_data['hull'], color='purple', width=2, dash=(5, 3))
+
+    def _render_right_hull(self, step_data):
+        """渲染右側 Convex Hull"""
+        # 畫凸包（虛線紫色）
+        self.draw_convex_hull(step_data['hull'], color='purple', width=2, dash=(5, 3))
+
+    def _render_merged_hull(self, step_data):
+        """渲染合併後的 Convex Hull"""
+        # 畫合併凸包（實線紫色）
+        self.draw_convex_hull(step_data['hull'], color='purple', width=3)
+
+    def _render_tangents(self, step_data):
+        """渲染上下切線"""
+        # 畫合併凸包（淡色）
+        self.draw_convex_hull(step_data['merged_hull'], color='lightgray', width=1)
+        
+        # 畫上切線（橙色粗線）
+        upper_left, upper_right = step_data['upper_tangent']
+        self.canvas.create_line(
+            upper_left.x, upper_left.y,
+            upper_right.x, upper_right.y,
+            fill='orange', width=4
+        )
+        
+        # 畫下切線（橙色粗線）
+        lower_left, lower_right = step_data['lower_tangent']
+        self.canvas.create_line(
+            lower_left.x, lower_left.y,
+            lower_right.x, lower_right.y,
+            fill='orange', width=4
+        )
+
+    def _render_hyperplane(self, step_data):
+        """渲染 Hyper Plane"""
+        # 畫左右 VD（淡色）
+        left_vd = step_data['left_vd']
+        for edge in left_vd.edges:
+            self.draw_edge(edge, color='lightblue', width=1)
+        
+        right_vd = step_data['right_vd']
+        for edge in right_vd.edges:
+            self.draw_edge(edge, color='lightgreen', width=1)
+        
+        # 畫 Hyper Plane（紅色粗線）
+        for edge in step_data['hyperplane']:
+            self.draw_edge(edge, color='red', width=3)
+
+    def _render_after_elimination(self, step_data):
+        """渲染消線後的結果"""
+        # 畫被刪除的邊（灰色虛線）
+        original_left = step_data['original_left_edges']
+        current_left = step_data['left_edges']
+        
+        # 簡化比較：用端點坐標
+        current_left_coords = set()
+        for e in current_left:
+            if e.start and e.end:
+                coord = ((e.start.x, e.start.y), (e.end.x, e.end.y))
+                current_left_coords.add(coord)
+        
+        for edge in original_left:
+            if edge.start and edge.end:
+                coord = ((edge.start.x, edge.start.y), (edge.end.x, edge.end.y))
+                if coord not in current_left_coords:
+                    self.draw_edge(edge, color='gray', width=1, dash=(2, 2))
+        
+        # 同樣處理右側
+        original_right = step_data['original_right_edges']
+        current_right = step_data['right_edges']
+        
+        current_right_coords = set()
+        for e in current_right:
+            if e.start and e.end:
+                coord = ((e.start.x, e.start.y), (e.end.x, e.end.y))
+                current_right_coords.add(coord)
+        
+        for edge in original_right:
+            if edge.start and edge.end:
+                coord = ((edge.start.x, edge.start.y), (edge.end.x, edge.end.y))
+                if coord not in current_right_coords:
+                    self.draw_edge(edge, color='gray', width=1, dash=(2, 2))
+        
+        # 畫保留的邊
+        for edge in current_left:
+            self.draw_edge(edge, color='blue', width=2)
+        for edge in current_right:
+            self.draw_edge(edge, color='green', width=2)
+        
+        # 畫 Hyper Plane
+        for edge in step_data['hyperplane']:
+            self.draw_edge(edge, color='red', width=3)
+
+    def _render_merged_result(self, step_data):
+        """渲染最終合併結果"""
+        merged_vd = step_data['merged_vd']
+        
+        # 畫所有邊（深綠色）
+        for edge in merged_vd.edges:
+            self.draw_edge(edge, color='darkgreen', width=2)
+        
+        # 畫合併後的 convex hull
+        if 'merged_hull' in step_data:
+            self.draw_convex_hull(step_data['merged_hull'], color='gray', width=1, dash=(2, 2))
+
+    def draw_edge(self, edge, color='blue', width=2, dash=None):
+        """畫邊，支援虛線"""
+        if edge.start and edge.end:
+            if dash:
+                self.canvas.create_line(
+                    edge.start.x, edge.start.y,
+                    edge.end.x, edge.end.y,
+                    fill=color, width=width, dash=dash
+                )
+            else:
+                self.canvas.create_line(
+                    edge.start.x, edge.start.y,
+                    edge.end.x, edge.end.y,
+                    fill=color, width=width
+                )
     def _create_status_bar(self):
         self.status_bar = tk.Label(
             self.root, text="Ready. Click on canvas to add points or load input file.",
@@ -135,18 +279,32 @@ class VoronoiGUI:
         x, y = point.x, point.y
         self.canvas.create_oval(x - size, y - size, x + size, y + size, fill=color, outline='black', width=1)
     
-    def draw_edge(self, edge: Edge, color='blue', width=2):
-        if edge.start and edge.end:
-            self.canvas.create_line(edge.start.x, edge.start.y, edge.end.x, edge.end.y, fill=color, width=width)
     
-    def draw_convex_hull(self, hull: list, color='purple', width=2, dash=(5, 3)):
-        if len(hull) < 2:
+    def draw_convex_hull(self, hull: list, color='purple', width=2, dash=None):
+        """畫 convex hull
+        
+        Args:
+            hull: Point 列表
+            color: 顏色
+            width: 線寬
+            dash: 虛線樣式
+        """
+        if len(hull) < 3:
             return
-        n = len(hull)
-        for i in range(n):
+        
+        for i in range(len(hull)):
             p1 = hull[i]
-            p2 = hull[(i + 1) % n]
-            self.canvas.create_line(p1.x, p1.y, p2.x, p2.y, fill=color, width=width, dash=dash)
+            p2 = hull[(i + 1) % len(hull)]
+            if dash:
+                self.canvas.create_line(
+                    p1.x, p1.y, p2.x, p2.y,
+                    fill=color, width=width, dash=dash
+                )
+            else:
+                self.canvas.create_line(
+                    p1.x, p1.y, p2.x, p2.y,
+                    fill=color, width=width
+                )
     
     def draw_voronoi_diagram(self, vd: VoronoiDiagram, edge_color='blue', point_color='red'):
         for edge in vd.edges:
@@ -194,70 +352,96 @@ class VoronoiGUI:
             self.draw_voronoi_diagram(self.current_vd)
             
             self.status_bar.config(text=f"Algorithm completed. {len(self.current_vd.edges)} edges generated.")
-    
+
+    def _draw_all_sites(self):
+        """永遠顯示所有點（所有演算法點，不只當前步驟的）"""
+        for point in self.points:
+            self.draw_point(point, color='black', size=4)
+
     def step_algorithm(self):
+        """Step-by-step 顯示演算法過程"""
         if len(self.points) < 2:
             messagebox.showwarning("Warning", "Need at least 2 points!")
             return
         
-        if not self.step_mode:
+        # 第一次按或重新開始
+        if not self.step_mode or self.current_step >= len(self.algorithm.steps):
             self.step_mode = True
             self.current_step = 0
+            
+            # 執行演算法
             self.current_vd = self.algorithm.build(self.points)
+            
+            if len(self.algorithm.steps) == 0:
+                messagebox.showinfo("Info", "No merge steps (too few points)")
+                self.clear_canvas()
+                self._draw_all_sites()  # 永遠顯示所有點
+                self.draw_voronoi_diagram(self.current_vd)
+                return
+            
+            # 重置狀態欄
+            self.step_info.config(text=f"Step: 1 / {len(self.algorithm.steps)}")
         
+        # 已經完成所有步驟
         if self.current_step >= len(self.algorithm.steps):
-            messagebox.showinfo("Info", "Algorithm completed!")
+            # 顯示最終結果（消線後的圖）
+            self.clear_canvas()
+            self._draw_all_sites()  # 永遠顯示所有點
+            
+            # 取得最後一個 merge 的結果（消線後）
+            last_step = self.algorithm.steps[-1]
+            if last_step['type'] == 'show_merged_result':
+                merged_vd = last_step['merged_vd']
+                
+                # 畫消線後的邊（深綠色）
+                for edge in merged_vd.edges:
+                    self.draw_edge(edge, color='darkgreen', width=2)
+                
+                # 畫最終 convex hull（紫色實線）
+                if 'merged_hull' in last_step:
+                    self.draw_convex_hull(last_step['merged_hull'], color='purple', width=2)
+            
+            self.status_bar.config(text="Algorithm completed! Click 'Step' again to restart.")
+            self.step_info.config(text=f"Completed ({len(self.algorithm.steps)} steps)")
+            
+            # 下次點擊會重新開始
+            self.step_mode = False
             return
         
+        # 取得當前步驟
         step_data = self.algorithm.steps[self.current_step]
+        step_type = step_data['type']
+        
+        # 清空畫布
         self.clear_canvas()
         
-        # 繪製 Convex Hulls (虛線)
-        if 'left_hull' in step_data:
-            self.draw_convex_hull(step_data['left_hull'], color='gray', width=1, dash=(4, 4))
-        if 'right_hull' in step_data:
-            self.draw_convex_hull(step_data['right_hull'], color='gray', width=1, dash=(4, 4))
+        # **永遠先畫所有點**
+        self._draw_all_sites()
         
-        # 建立 hyperplane 集合
-        hyperplane_edges = step_data.get('hyperplane', [])
-        hp_set = set()
-        for e in hyperplane_edges:
-            if e.start and e.end:
-                hp_set.add((round(e.start.x, 2), round(e.start.y, 2), round(e.end.x, 2), round(e.end.y, 2)))
-                hp_set.add((round(e.end.x, 2), round(e.end.y, 2), round(e.start.x, 2), round(e.start.y, 2)))
+        # 根據步驟類型渲染
+        if step_type == 'show_left_vd':
+            self._render_left_vd(step_data)
+        elif step_type == 'show_right_vd':
+            self._render_right_vd(step_data)
+        elif step_type == 'show_left_hull':
+            self._render_left_hull(step_data)
+        elif step_type == 'show_right_hull':
+            self._render_right_hull(step_data)
+        elif step_type == 'show_merged_hull':
+            self._render_merged_hull(step_data)
+        elif step_type == 'show_tangents':
+            self._render_tangents(step_data)
+        elif step_type == 'show_hyperplane':
+            self._render_hyperplane(step_data)
+        elif step_type == 'show_after_elimination':
+            self._render_after_elimination(step_data)
+        elif step_type == 'show_merged_result':
+            self._render_merged_result(step_data)
         
-        left_sites = set(step_data['left_sites'])
-        
-        if step_data['merged']:
-            for edge in step_data['merged'].edges:
-                if not edge.start or not edge.end:
-                    continue
-                
-                edge_tup = (round(edge.start.x, 2), round(edge.start.y, 2), round(edge.end.x, 2), round(edge.end.y, 2))
-                
-                if edge_tup in hp_set:
-                    self.draw_edge(edge, color='red', width=3)
-                else:
-                    is_left = False
-                    if edge.site_left and edge.site_left in left_sites:
-                        is_left = True
-                    elif edge.site_right and edge.site_right in left_sites:
-                        is_left = True
-                    
-                    if is_left:
-                        self.draw_edge(edge, color='blue', width=2)
-                    else:
-                        self.draw_edge(edge, color='green', width=2)
-        
-        # 繪製站點
-        if step_data['merged']:
-            for site in step_data['merged'].sites:
-                color = 'blue' if site in left_sites else 'green'
-                self.draw_point(site, color=color, size=4)
-        
+        # 更新狀態
         self.current_step += 1
         self.step_info.config(text=f"Step: {self.current_step} / {len(self.algorithm.steps)}")
-        self.status_bar.config(text=f"Step {self.current_step}: Merging... Red=Hyperplane, Gray=Hull")
+        self.status_bar.config(text=f"Step {self.current_step}: {step_data['description']}")
     
     def reset_algorithm(self):
         self.current_step = 0

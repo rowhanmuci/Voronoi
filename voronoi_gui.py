@@ -373,7 +373,7 @@ class VoronoiGUI:
             self.current_vd = self.algorithm.build(self.points)
             
             if len(self.algorithm.steps) == 0:
-                messagebox.showinfo("Info", "No merge steps (too few points)")
+                messagebox.showinfo("Info", "No merge steps (special case)")
                 self.clear_canvas()
                 self._draw_all_sites()  # 永遠顯示所有點
                 self.draw_voronoi_diagram(self.current_vd)

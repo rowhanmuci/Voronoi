@@ -16,6 +16,7 @@ v7: 加入詳細的 step-by-step 記錄
 from typing import List, Tuple, Optional
 from voronoi_geometry import Point, Edge, VoronoiDiagram, perpendicular_bisector, line_intersection, convex_hull, ccw, circumcenter, merge_convex_hulls
 import math
+import random  # 用於擾動法處理退化情況
 
 
 class VoronoiDC:
@@ -69,6 +70,40 @@ class VoronoiDC:
         # Conquer
         left_vd, left_hull = self._divide_conquer(left_points)
         right_vd, right_hull = self._divide_conquer(right_points)
+        
+        # ⭐ 垂直共線檢測和特殊處理
+        all_points = left_points + right_points
+        is_vertical_collinear = all(abs(p.x - all_points[0].x) < 1e-6 for p in all_points)
+        
+        if is_vertical_collinear:
+            # 垂直共線特殊處理
+            print(f"✨ 檢測到垂直共線情況，使用特殊處理")
+            
+            # 對於垂直共線，Voronoi 邊就是每對相鄰點的中垂線（水平線）
+            merged_vd = VoronoiDiagram()
+            merged_vd.sites = all_points.copy()
+            
+            # 按 y 座標排序
+            sorted_by_y = sorted(all_points, key=lambda p: p.y)
+            
+            # 為每對相鄰點創建中垂線
+            for i in range(len(sorted_by_y) - 1):
+                p1 = sorted_by_y[i]
+                p2 = sorted_by_y[i + 1]
+                
+                # 中垂線是水平線，y 座標是兩點的中點
+                mid_y = (p1.y + p2.y) / 2
+                
+                # 創建從左到右的水平線
+                edge = Edge(Point(0, mid_y), Point(self.canvas_width, mid_y))
+                edge.site_left = p1
+                edge.site_right = p2
+                merged_vd.add_edge(edge)
+            
+            # 凸包只包含最上和最下的點
+            merged_hull = [sorted_by_y[0], sorted_by_y[-1]]
+            
+            return merged_vd, merged_hull
         
         # === 開始記錄詳細步驟 ===
         merge_id = len(self.steps)  # 用於標識這是第幾次合併
@@ -470,10 +505,7 @@ class VoronoiDC:
             )
             
             if next_point is None:
-                # 🎯 邊界導引 (Boundary Guidance)
-                # Hyper Plane 撞到邊界，但可能還沒到下切線
-                # 這在 N=2 或小點數時是正常現象（交點在螢幕外或 t<0）
-                
+                # 1. 處理當前 HP 線段延伸到邊界
                 boundary_pt = self._find_chain_end_boundary(a, b, c, cur_point, cur_left, cur_right)
                 
                 if boundary_pt and cur_point:
@@ -481,21 +513,38 @@ class VoronoiDC:
                     edge.site_left, edge.site_right = cur_left, cur_right
                     chain_edges.append(edge)
                 
-                # ⭐ 關鍵修正：檢查是否已到達下切線
-                if cur_left == lower_left and cur_right == lower_right:
-                    # 已經是下切線，正常結束
-                    break
-                else:
-                    # 還沒到下切線就撞牆了
-                    # 這代表剩餘的交點在螢幕外（幾何上是無限遠）
-                    # 在 Bounding Box 內，當前的 Hyper Plane 已經是正確的分界
-                    # 安全結束，相信下切線邏輯會處理接合
-                    print(f"💡 Boundary Guidance: Hit boundary at ({boundary_pt.x if boundary_pt else 'None'},{boundary_pt.y if boundary_pt else 'None'})")
-                    print(f"   Current sites: ({cur_left.x:.0f},{cur_left.y:.0f})-({cur_right.x:.0f},{cur_right.y:.0f})")
-                    print(f"   Lower tangent: ({lower_left.x:.0f},{lower_left.y:.0f})-({lower_right.x:.0f},{lower_right.y:.0f})")
-                    print(f"   This is geometrically correct - intersection is outside canvas")
-                    break
-                break
+                # --- 新增：Hyper Plane 補完邏輯 (方案 A) ---
+                # 檢查是否已到達下切線 sites
+                is_at_lower_tangent = (cur_left == lower_left and cur_right == lower_right) or \
+                                      (cur_left == lower_right and cur_right == lower_left)
+                
+                if not is_at_lower_tangent:
+                    # 尚未到達下切線，此時應發生在邊界外的拓撲事件，我們手動補完。
+                    
+                    # 1. 取得上一個 HP 終點 (boundary_pt) 作為新線段的起點
+                    start_point = boundary_pt 
+                    
+                    # 2. 強制設定為下切線 sites
+                    cur_left = lower_left
+                    cur_right = lower_right
+                    
+                    # 3. 重新計算下切線的中垂線
+                    a, b, c = perpendicular_bisector(cur_left, cur_right)
+                    
+                    # 4. 找到新的線段在邊界上的終點
+                    # 從 start_point 往遠離點的方向延伸到邊界
+                    final_boundary_pt = self._find_chain_end_boundary(a, b, c, start_point, cur_left, cur_right)
+                    
+                    # 5. 如果找到終點，生成補完的 HP 線段
+                    if final_boundary_pt and start_point:
+                        edge = Edge(start_point, final_boundary_pt)
+                        edge.site_left, edge.site_right = cur_left, cur_right
+                        chain_edges.append(edge)
+                        print(f"✨ HP 補完：從 ({start_point.x:.1f},{start_point.y:.1f}) 到 ({final_boundary_pt.x:.1f},{final_boundary_pt.y:.1f})")
+                        print(f"   下切線 sites: ({cur_left.x},{cur_left.y}) - ({cur_right.x},{cur_right.y})")
+                # --- 補完邏輯結束 ---
+                
+                break # 退出主循環
             
             edge = Edge(cur_point, next_point)
             edge.site_left, edge.site_right = cur_left, cur_right
@@ -515,6 +564,7 @@ class VoronoiDC:
             
             cur_point = next_point
         
+        # 過濾掉長度為 0 的邊
         left_edges = [e for e in left_edges if e.start and e.end and e.start.distance_to(e.end) > 1e-6]
         right_edges = [e for e in right_edges if e.start and e.end and e.start.distance_to(e.end) > 1e-6]
         
@@ -571,7 +621,8 @@ class VoronoiDC:
                     is_forward = intersection.y > cur_point.y + 1e-5
                     dist = intersection.y - cur_point.y
                 
-                if is_forward and dist > 0:
+                # 確保 dist > 容差，與交點計算一致
+                if is_forward and dist > 1e-6:
                     other = self._get_other_site(edge, current_site, all_sites)
                     
                     if other:
@@ -609,22 +660,28 @@ class VoronoiDC:
         is_horizontal = abs(a) < 1e-9
         
         if is_horizontal:
-            if abs(cur_left.x - cur_right.x) > 1e-5:
+            if cur_point and abs(cur_left.x - cur_right.x) > 1e-5:
                 go_left = cur_left.x < cur_right.x
             else:
                 mid_x = (cur_left.x + cur_right.x) / 2
-                go_left = cur_point.x > mid_x
+                if cur_point:
+                    go_left = cur_point.x > mid_x
+                else:
+                    go_left = True  # 預設往左
             
             if go_left:
-                return Point(0, cur_point.y)
+                return Point(0, cur_point.y if cur_point else 0)
             else:
-                return Point(self.canvas_width, cur_point.y)
+                return Point(self.canvas_width, cur_point.y if cur_point else 0)
         else:
             boundary_pt = self._find_boundary_intersection(a, b, c, 'bottom')
             if boundary_pt is None:
                 intersections = self._line_canvas_intersections(a, b, c)
                 if intersections:
-                    candidates = [p for p in intersections if p.y > cur_point.y + 1e-5]
+                    if cur_point:
+                        candidates = [p for p in intersections if p.y > cur_point.y + 1e-5]
+                    else:
+                        candidates = intersections
                     if candidates:
                         boundary_pt = min(candidates, key=lambda p: p.y)
             return boundary_pt
@@ -667,15 +724,19 @@ class VoronoiDC:
         d1 = a * x1 + b * y1 + c
         d2 = a * x2 + b * y2 + c
         
-        if d1 * d2 > 1e-9:
+        # 使用更大的容差來捕獲邊界交點
+        epsilon = 1e-6
+        
+        if d1 * d2 > epsilon:
             return None
         
-        if abs(d1 - d2) < 1e-9:
+        if abs(d1 - d2) < epsilon:
             return None
         
         t = d1 / (d1 - d2)
         
-        if t < -1e-9 or t > 1 + 1e-9:
+        # 擴大容差範圍以捕獲邊界點
+        if t < -epsilon or t > 1 + epsilon:
             return None
         
         x = x1 + t * (x2 - x1)
@@ -684,18 +745,19 @@ class VoronoiDC:
         return Point(x, y)
     
     def _get_other_site(self, edge: Edge, current_site: Point, sites: List[Point]) -> Optional[Point]:
-        """取得邊的另一個 site（完全依賴拓撲結構，不使用距離猜測）"""
+        """
+        取得邊的另一個 site (完全依賴拓撲結構)
+        
+        備註：假設在 Base Case (2點/3點) 時已正確賦值 site_left/site_right。
+        如果這裡返回 None，通常代表 Base Case 有錯或拓撲結構已損壞。
+        """
         if edge.site_left and edge.site_right:
             if edge.site_left == current_site:
                 return edge.site_right
             elif edge.site_right == current_site:
                 return edge.site_left
         
-        # 如果執行到這裡，代表 Base Case (2點或3點) 建立 Edge 時資料不全
-        # 這裡應該要報錯，而不是猜測
-        print(f"⚠️ [Error] Edge missing site info! start=({edge.start.x:.0f},{edge.start.y:.0f}), end=({edge.end.x:.0f},{edge.end.y:.0f})")
-        print(f"  current_site=({current_site.x:.0f},{current_site.y:.0f})")
-        print(f"  site_left={edge.site_left}, site_right={edge.site_right}")
+        # 如果 Edge 沒有記錄 site 資訊 (應檢查 Base Case 邏輯)
         return None
     
     def _trim_edge_at_point(self, edge: Edge, intersection: Point, site_keep: Point, site_discard: Point):
